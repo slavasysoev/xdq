@@ -5,6 +5,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/slavasysoev/xdq/internal/distance"
 	"github.com/slavasysoev/xdq/internal/graph"
 	"github.com/slavasysoev/xdq/internal/report"
 )
@@ -100,8 +101,8 @@ func nearTopics(name string, topics []graph.Node) []graph.NodeID {
 		if len(topic.Name) >= longNameLength {
 			limit = 2
 		}
-		distance := editDistance(name, topic.Name, limit)
-		if distance > 0 && distance <= limit {
+		edits := distance.Levenshtein(name, topic.Name, limit)
+		if edits > 0 && edits <= limit {
 			near = append(near, topic.ID)
 		}
 	}
@@ -113,44 +114,4 @@ func hasRecords(snapshot graph.Snapshot, topic graph.NodeID) bool {
 	observation, observed := snapshot.Observations.Topics[topic]
 
 	return observed && !neverReceived(observation)
-}
-
-// editDistance returns the Levenshtein distance of the two strings, or limit+1 as soon as it is
-// known to exceed limit. The early exit matters: every word of every configuration file is
-// compared with every topic.
-func editDistance(left, right string, limit int) int {
-	if abs(len(left)-len(right)) > limit {
-		return limit + 1
-	}
-	previous := make([]int, len(right)+1)
-	current := make([]int, len(right)+1)
-	for index := range previous {
-		previous[index] = index
-	}
-	for leftIndex := 1; leftIndex <= len(left); leftIndex++ {
-		current[0] = leftIndex
-		rowMinimum := current[0]
-		for rightIndex := 1; rightIndex <= len(right); rightIndex++ {
-			substitution := previous[rightIndex-1]
-			if left[leftIndex-1] != right[rightIndex-1] {
-				substitution++
-			}
-			current[rightIndex] = min(previous[rightIndex]+1, current[rightIndex-1]+1, substitution)
-			rowMinimum = min(rowMinimum, current[rightIndex])
-		}
-		if rowMinimum > limit {
-			return limit + 1
-		}
-		previous, current = current, previous
-	}
-
-	return previous[len(right)]
-}
-
-func abs(value int) int {
-	if value < 0 {
-		return -value
-	}
-
-	return value
 }

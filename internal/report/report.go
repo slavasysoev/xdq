@@ -166,3 +166,20 @@ func (report *Report) IsComplete() bool {
 func (report *Report) HasErrors() bool {
 	return slices.ContainsFunc(report.Findings, func(finding Finding) bool { return finding.Severity == SeverityError })
 }
+
+// FindingsInChain returns the findings about the chain itself or with a subject in it, in the
+// order of findings.
+func FindingsInChain(chain Chain, findings []Finding) []Finding {
+	inChain := make(map[graph.NodeID]bool, len(chain.Nodes))
+	for _, node := range chain.Nodes {
+		inChain[node.ID] = true
+	}
+	var result []Finding
+	for _, finding := range findings {
+		if finding.Chain == chain.Name || slices.ContainsFunc(finding.Subjects, func(subject graph.NodeID) bool { return inChain[subject] }) {
+			result = append(result, finding)
+		}
+	}
+
+	return result
+}

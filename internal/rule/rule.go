@@ -40,6 +40,7 @@ var definitions = []definition{
 	{name: "unresolved-client", check: checkUnresolvedClient},
 	{name: "group-spans-environments", check: checkGroupSpansEnvironments},
 	{name: "group-multiple-workloads", check: checkGroupMultipleWorkloads},
+	{name: "database-spans-environments", check: checkDatabaseSpansEnvironments},
 	{name: "near-miss-topic", check: checkNearMissTopic},
 }
 

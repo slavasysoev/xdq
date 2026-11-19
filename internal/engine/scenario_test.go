@@ -58,7 +58,7 @@ func TestScenarioStolenMessages(t *testing.T) {
 	engine := New([]source.Source{
 		returning("main", config.TypeKafka, kafka, nil),
 		returning("test", config.TypeKubernetes, kubernetes, nil),
-	}, rules, nil, time.Second)
+	}, rules, nil, nil, time.Second)
 
 	result := engine.Run(t.Context(), "stand-a")
 
@@ -127,7 +127,7 @@ func TestScenarioTypo(t *testing.T) {
 	engine := New([]source.Source{
 		returning("main", config.TypeKafka, kafka, nil),
 		returning("test", config.TypeKubernetes, kubernetes, nil),
-	}, rules, nil, time.Second)
+	}, rules, nil, nil, time.Second)
 
 	result := engine.Run(t.Context(), "stand-a")
 
@@ -153,5 +153,63 @@ func TestScenarioTypo(t *testing.T) {
 	}
 	if result.Status != report.StatusWarning {
 		t.Errorf("status = %s, want warning", result.Status)
+	}
+}
+
+// TestScenarioWrongDatabase reproduces the database version of the motivating bug: after a config
+// change billing of stand-b connects to the database of stand-a and writes into it.
+func TestScenarioWrongDatabase(t *testing.T) {
+	ordersA := graph.NewDatabase("orders-db", "orders_a")
+	podA := graph.NewEndpoint("10.0.0.1")
+	podB := graph.NewEndpoint("10.0.1.1")
+	postgres := graph.NewSnapshot()
+	postgres.Nodes = []graph.Node{ordersA, podA, podB}
+	postgres.Edges = []graph.Edge{
+		{From: podA.ID, To: ordersA.ID, Kind: graph.EdgeConnection, Evidence: []graph.Evidence{{Source: "orders-db", Detail: "3 sessions as user billing"}}},
+		{From: podB.ID, To: ordersA.ID, Kind: graph.EdgeConnection, Evidence: []graph.Evidence{{Source: "orders-db", Detail: "2 sessions as user billing"}}},
+	}
+
+	billingA := graph.NewWorkload("test", "stand-a", graph.WorkloadDeployment, "billing")
+	billingA.Environment = "stand-a"
+	billingB := graph.NewWorkload("test", "stand-b", graph.WorkloadDeployment, "billing")
+	billingB.Environment = "stand-b"
+	kubernetes := graph.NewSnapshot()
+	kubernetes.Nodes = []graph.Node{billingA, billingB}
+	kubernetes.Identities = []graph.Identity{
+		{Address: "10.0.0.1", Workload: billingA.ID},
+		{Address: "10.0.1.1", Workload: billingB.ID},
+	}
+
+	rules, err := rule.NewSet(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	engine := New([]source.Source{
+		returning("orders-db", config.TypePostgres, postgres, nil),
+		returning("test", config.TypeKubernetes, kubernetes, nil),
+	}, rules, nil, nil, time.Second)
+
+	result := engine.Run(t.Context(), "stand-a")
+
+	if len(result.Findings) != 1 {
+		t.Fatalf("findings = %+v, want exactly database-spans-environments", result.Findings)
+	}
+	finding := result.Findings[0]
+	if finding.Rule != "database-spans-environments" || finding.Severity != report.SeverityError {
+		t.Errorf("finding = %s %s, want database-spans-environments error", finding.Rule, finding.Severity)
+	}
+	wantSubjects := []graph.NodeID{ordersA.ID, billingA.ID, billingB.ID}
+	if !reflect.DeepEqual(finding.Subjects, wantSubjects) {
+		t.Errorf("subjects = %v, want %v", finding.Subjects, wantSubjects)
+	}
+	wantEvidence := []graph.Evidence{
+		{Source: "test", Detail: "stand-a  deployment/billing  3 sessions as user billing"},
+		{Source: "test", Detail: "stand-b  deployment/billing  2 sessions as user billing"},
+	}
+	if !reflect.DeepEqual(finding.Evidence, wantEvidence) {
+		t.Errorf("evidence =\n%+v\nwant\n%+v", finding.Evidence, wantEvidence)
+	}
+	if result.Status != report.StatusError {
+		t.Errorf("status = %s, want error", result.Status)
 	}
 }

@@ -57,21 +57,25 @@ References like §7.1 point to [spec.md](spec.md).
 
 ## M5. Lockfile
 
-- [ ] **5.1** `internal/lock`: write and read, deterministic output (§10).
+- [x] **5.1** `internal/lock`: write and read, deterministic output (§10).
   Verify: locking the same graph twice produces byte-identical files.
-- [ ] **5.2** Drift and rename hint (§9.2); `xdq lock` refuses on errors unless `--force`.
+- [x] **5.2** Drift and rename hint (§9.2); `xdq lock` refuses on errors unless `--force`.
   Verify: unit tests for added / removed edges and rename detection; CLI test for the refusal.
 
 ## M6. Postgres
 
-- [ ] **6.1** `internal/source/postgres`: databases and connections from `pg_stat_activity` (§6.3).
+- [x] **6.1** `internal/source/postgres`: databases and connections from `pg_stat_activity` (§6.3).
   Verify: integration test (testcontainers) with two client connections; xdq's own session excluded.
+- [x] **6.2** Rule `database-spans-environments`; a removed `connection` edge is a drift warning (§9).
+  Verify: rule unit tests; scenario test: billing of stand-b connected to the database of stand-a
+  → `error` with both workloads and their sessions in the evidence.
 
 ## M7. TUI
 
 - [ ] **7.1** `internal/tui`: chain list with status → chain view → details (findings, evidence,
   observations); refresh; renders only a `Report`.
   Verify: model update tests with Bubble Tea messages; manual run against the scenario setup.
+  Model tests done; the manual run is pending.
 
 ## M8. Release readiness
 

@@ -10,6 +10,7 @@ import (
 	"github.com/slavasysoev/xdq/internal/source"
 	"github.com/slavasysoev/xdq/internal/source/kafka"
 	"github.com/slavasysoev/xdq/internal/source/kubernetes"
+	"github.com/slavasysoev/xdq/internal/source/postgres"
 )
 
 // openSources creates a source for every configured one, in name order. On failure, the sources
@@ -30,6 +31,8 @@ func openSources(configuration *config.Config) ([]source.Source, error) {
 			created, err = kafka.New(name, *sourceConfig.Kafka)
 		case config.TypeKubernetes:
 			created, err = kubernetes.New(name, *sourceConfig.Kubernetes)
+		case config.TypePostgres:
+			created, err = postgres.New(name, *sourceConfig.Postgres)
 		default:
 			err = fmt.Errorf("%s sources are not implemented yet", sourceConfig.Type())
 		}

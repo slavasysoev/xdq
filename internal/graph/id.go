@@ -1,5 +1,7 @@
 package graph
 
+import "strings"
+
 // NodeID is a stable, human-readable node identifier. IDs are stored in the lockfile,
 // so they never contain volatile data such as IPs of pods or replica names.
 //
@@ -7,6 +9,13 @@ package graph
 // source discovered a node. IDs are unique as long as source names contain no "/": every
 // name that may contain "/" (e.g. a Kafka group) is the last segment of its ID.
 type NodeID string
+
+// Kind returns the node kind named by the prefix of the ID.
+func (id NodeID) Kind() NodeKind {
+	kind, _, _ := strings.Cut(string(id), ":")
+
+	return NodeKind(kind)
+}
 
 // TopicID returns the ID of a topic, e.g. "topic:main/orders.created".
 func TopicID(sourceName, topic string) NodeID {

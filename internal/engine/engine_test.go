@@ -58,7 +58,7 @@ func TestRunAllSourcesAvailable(t *testing.T) {
 	engine := New([]source.Source{
 		returning("main", "kafka", kafkaSnapshot, nil),
 		returning("db", "postgres", postgresSnapshot, nil),
-	}, &rule.Set{}, nil, time.Second)
+	}, &rule.Set{}, nil, nil, time.Second)
 
 	result := engine.Run(t.Context(), "stand-a")
 
@@ -86,7 +86,7 @@ func TestRunOneSourceFails(t *testing.T) {
 	engine := New([]source.Source{
 		returning("main", "kafka", kafkaSnapshot, nil),
 		returning("db", "postgres", postgresSnapshot, errors.New("connection refused")),
-	}, &rule.Set{}, nil, time.Second)
+	}, &rule.Set{}, nil, nil, time.Second)
 
 	result := engine.Run(t.Context(), "")
 
@@ -111,7 +111,7 @@ func TestRunSourceTimeout(t *testing.T) {
 
 		return graph.Snapshot{}, ctx.Err()
 	}}
-	engine := New([]source.Source{hanging}, &rule.Set{}, nil, 10*time.Millisecond)
+	engine := New([]source.Source{hanging}, &rule.Set{}, nil, nil, 10*time.Millisecond)
 
 	result := engine.Run(t.Context(), "")
 
@@ -143,7 +143,7 @@ func TestRunInParallel(t *testing.T) {
 	engine := New([]source.Source{
 		fakeSource{name: "first", sourceType: "kafka", discover: discover},
 		fakeSource{name: "second", sourceType: "kafka", discover: discover},
-	}, &rule.Set{}, nil, 5*time.Second)
+	}, &rule.Set{}, nil, nil, 5*time.Second)
 
 	result := engine.Run(t.Context(), "")
 
@@ -155,7 +155,7 @@ func TestRunInParallel(t *testing.T) {
 }
 
 func TestRunCanRepeat(t *testing.T) {
-	engine := New([]source.Source{returning("main", "kafka", kafkaSnapshot, nil)}, &rule.Set{}, nil, time.Second)
+	engine := New([]source.Source{returning("main", "kafka", kafkaSnapshot, nil)}, &rule.Set{}, nil, nil, time.Second)
 
 	first := engine.Run(t.Context(), "")
 	second := engine.Run(t.Context(), "")
@@ -176,7 +176,7 @@ func TestRunChecksRules(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	engine := New([]source.Source{returning("main", "kafka", stalled, nil)}, rules, nil, time.Second)
+	engine := New([]source.Source{returning("main", "kafka", stalled, nil)}, rules, nil, nil, time.Second)
 
 	result := engine.Run(t.Context(), "")
 

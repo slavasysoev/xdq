@@ -50,7 +50,7 @@ sources:
 `
 
 func TestCheckFailsBeforeDiscovery(t *testing.T) {
-	t.Setenv("XDQ_TEST_DSN", "postgres://localhost/test")
+	t.Setenv("XDQ_TEST_DSN", "postgres://localhost:not-a-port/test")
 	postgres := writeConfig(t, "version: 1\nsources:\n  test:\n    postgres: {dsn: '${env:XDQ_TEST_DSN}'}\n")
 	unknownRule := writeConfig(t, unreachableKafka+"rules:\n  stalled-consumers:\n    severity: off\n")
 	withChain := writeConfig(t, unreachableKafka+"chains:\n  order-flow:\n    from:\n      - topic: orders.created\n")
@@ -62,7 +62,7 @@ func TestCheckFailsBeforeDiscovery(t *testing.T) {
 		{name: "missing config", args: []string{"--config", filepath.Join(t.TempDir(), "missing.yaml")}, wantError: "missing.yaml"},
 		{name: "unknown output", args: []string{"--output", "yaml"}, wantError: `invalid --output "yaml"`},
 		{name: "zero timeout", args: []string{"--timeout", "0s"}, wantError: "invalid --timeout"},
-		{name: "source type not implemented", args: []string{"--config", postgres}, wantError: "postgres sources are not implemented yet"},
+		{name: "invalid postgres dsn", args: []string{"--config", postgres}, wantError: "source test: postgres source test: invalid dsn"},
 		{
 			name:      "unknown chain",
 			args:      []string{"--config", withChain, "--chain", "order-flw"},

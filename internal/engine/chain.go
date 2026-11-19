@@ -101,6 +101,22 @@ func matchingNodes(snapshot graph.Snapshot, selector graph.Selector, environment
 	return matched
 }
 
+// chainsOnlyInFindings returns an empty chain for every chain a finding is about that is not among
+// the chains, e.g. a chain that is only in the lockfile. The report then shows the finding under
+// its chain, and the finding counts in the status.
+func chainsOnlyInFindings(findings []report.Finding, chains []report.Chain) []report.Chain {
+	var missing []report.Chain
+	for _, finding := range findings {
+		known := func(chain report.Chain) bool { return chain.Name == finding.Chain }
+		if finding.Chain == "" || slices.ContainsFunc(chains, known) || slices.ContainsFunc(missing, known) {
+			continue
+		}
+		missing = append(missing, report.NewChain(finding.Chain, graph.Subgraph{Snapshot: graph.NewSnapshot()}))
+	}
+
+	return missing
+}
+
 // findingsInChains keeps the findings about the chains: a finding with a subject in at least one
 // chain, or about a chain itself. Problems elsewhere in shared infrastructure, e.g. a stalled group
 // of another environment, must not fail the check of this one.

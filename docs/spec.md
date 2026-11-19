@@ -129,8 +129,10 @@ never stored in the lockfile:
 
 - topic: partitions, end offsets, timestamp of the latest record;
 - group: state (Stable, Empty, Rebalancing, Dead), lag per topic, partitions per member;
-- workload: ready replicas;
-- database: number of sessions per client.
+- workload: ready replicas.
+
+The number of sessions per database client is not an observation: it is in the evidence of the
+`connection` edge, e.g. "2 sessions as user billing".
 
 ## 6. Sources (MVP)
 
@@ -180,11 +182,30 @@ Identity source and configuration source.
 ### 6.3 Postgres
 
 Reports databases and client connections from `pg_stat_activity` (client backends only,
-excluding xdq's own session).
+excluding xdq's own session). One source is one server: `pg_stat_activity` covers every database
+of the server, so xdq connects once, to any database. Separate servers are separate sources.
 
-- Required role: `pg_read_all_stats` (or `pg_monitor`). Without it, `client_addr` of other
-  users' sessions is hidden.
+- Every database that accepts connections and is not a template is a node, also without
+  clients, so that a chain can start at it.
+- One `connection` edge per client address and database. Its evidence counts the sessions per
+  role. Sessions over a Unix socket have no address and are skipped.
+- The session is read-only (`default_transaction_read_only`) and named `xdq`
+  (`application_name`). Queries read only `pg_database` and `pg_stat_activity`.
+- TLS and other connection settings are part of the DSN (`sslmode`, `sslrootcert`, ...).
+- Required role: `pg_monitor` (or `pg_read_all_stats`, which it includes). Superuser is not
+  needed:
+  ```sql
+  CREATE ROLE xdq LOGIN PASSWORD '...';
+  GRANT pg_monitor TO xdq;
+  ```
+  Without it Postgres hides the client address of other roles' sessions, and their connections
+  would be silently missing. So discovery fails with "grant pg_monitor" instead.
+- An invalid DSN is reported without the parser's message: it may quote the DSN with the password.
+- Supported from Postgres 10 (`backend_type`, `pg_read_all_stats`).
 - **Known gap:** behind a connection pooler (PgBouncer) all clients appear as the pooler.
+- **Known gap:** only sessions open at the moment of the check are seen. A connection pool
+  that closes idle sessions, or a CronJob that is not running now, has no edge. This is why a
+  removed `connection` edge is only a warning (§9.2).
 
 ## 7. Resolution
 
@@ -280,6 +301,7 @@ Rules work without a lockfile, from the first run.
 |---|---|---|
 | `group-spans-environments` | error | A group has members from workloads in more than one environment. |
 | `group-multiple-workloads` | warning | A group has members from more than one workload in the same environment (may be a legitimate canary). |
+| `database-spans-environments` | error | A database has clients from workloads in more than one environment (a service points to the database of another environment). |
 | `unresolved-client` | error for group members, warning for DB clients | An endpoint could not be resolved to a workload (e.g. a developer laptop consuming from a test cluster). |
 | `stalled-consumer` | error | A group has lag > 0 and no active members. |
 | `lagging-consumer` | warning | Group lag on a topic exceeds a threshold (default 1000). |
@@ -312,15 +334,32 @@ Details:
 
 Comparison of each chain's current edges with the locked edges:
 
-| Drift | Severity |
-|---|---|
-| Edge removed | error |
-| Edge added | warning |
-| Chain present in lock but no longer matched by config | warning |
+| Drift | Finding | Severity |
+|---|---|---|
+| Edge removed | `drift-edge-removed` | error; warning for a `connection` edge |
+| Edge added | `drift-edge-added` | warning |
+| Chain present in lock but no longer matched by config | `drift-chain-not-configured` | warning |
+| Chain in config but not in lock | `drift-chain-not-locked` | warning |
 
-**Rename hint:** when a removed and an added node of the same kind have names within
-edit distance 2, the finding says "possibly renamed or mistyped: `orders.created` →
-`orders.creatd`".
+**Rename hint:** when a removed and an added node of the same kind have IDs within
+edit distance 2, the finding says "possibly renamed or mistyped:
+`topic:main/orders.created -> topic:main/orders.creatd`". Full IDs are shown: a group name may
+contain `/`, so a name cannot be cut out of an ID reliably. The hint needs both nodes in the
+chain: a consumer with a typo in its topic usually drops out of a chain that starts at the right
+topic, and then `near-miss-topic` names the typo.
+
+Details:
+
+- Drift severities cannot be configured: the lockfile is the configuration of what is expected.
+- A `connection` edge is seen only while the client holds a session (§6.3), so its absence
+  proves nothing. A wrong database is caught by `database-spans-environments` and by the added
+  edge instead.
+- Every drift finding names its chain, which it makes at least as bad as the finding. A chain that
+  is only in the lockfile is shown as an empty chain with its finding.
+- A new chain gets one `drift-chain-not-locked` finding instead of one `drift-edge-added` per edge.
+- Drift is compared only when every source answered: the edges of an unavailable source would all
+  look removed. The run is `unknown` anyway.
+- With `--chain`, configured chains that are not checked are not compared.
 
 ### 9.3 Status aggregation
 
@@ -340,18 +379,27 @@ edit distance 2, the finding says "possibly renamed or mistyped: `orders.created
   the repository that owns the tests or the environment (e.g. `locks/stand-a.lock`).
 - YAML, sorted, one edge per line, no timestamps, no volatile data.
 - `xdq lock` refuses to write while there are `error` findings from rules, unless `--force`.
-  The lockfile represents a known-good state.
+  The lockfile represents a known-good state. It never writes while a source is unavailable,
+  not even with `--force`: an incomplete graph is not a known-good state. `xdq lock` writes every
+  configured chain and replaces the old lockfile without comparing.
+- Edges to and from endpoints are not stored: an endpoint ID is an address, which changes with
+  every restart of a pod. Unresolved clients are reported by `unresolved-client`.
+- `check` compares with the default lockfile only when it exists. A lockfile named by `--lock`
+  must exist. A lockfile of another environment than `--env` is an error (exit code 2).
+- Values are written plain when that reads back as the same string, double-quoted otherwise
+  (e.g. a group name with `: `). The first line is a comment that the file is generated.
 
 ```yaml
+# Written by xdq lock: the chains in a known-good state. Do not edit.
 version: 1
 environment: stand-a
 chains:
   order-flow:
     edges:
-      - {from: workload:test/stand-a/deployment/billing, kind: producer, to: topic:main/invoices.created}
-      - {from: workload:test/stand-a/deployment/billing, kind: connection, to: database:orders-db/orders}
       - {from: group:main/billing, kind: membership, to: workload:test/stand-a/deployment/billing}
       - {from: topic:main/orders.created, kind: consumer, to: group:main/billing}
+      - {from: workload:test/stand-a/deployment/billing, kind: connection, to: database:orders-db/orders}
+      - {from: workload:test/stand-a/deployment/billing, kind: producer, to: topic:main/invoices.created}
 ```
 
 Replica counts are not locked: autoscaling would make the lockfile change all the time.
@@ -412,8 +460,22 @@ rules:
 | `xdq lock` | Discover and write the lockfile. |
 | `xdq` (no args) | Interactive TUI. |
 
-Common flags: `--config`, `--env`, `--chain` (repeatable), `--lock`, `--output text|json`,
-`--timeout` (per source, default 10s).
+Common flags of `xdq`, `check` and `lock`: `--config`, `--env`, `--lock`, `--timeout` (per source,
+default 10s). `check` also has `--chain` (repeatable) and `--output text|json`; `lock` has
+`--force`.
+
+The TUI loads the config and opens the sources once; an invalid config fails before it starts.
+It checks on start and on `r`, keeping the old report on screen while a check runs. Screens, from
+Enter to Enter, Esc back:
+
+1. Chains, the worst first, with the overall status and the status of every source.
+2. A chain as a tree in the direction data flows, from the nodes without incoming edges. A node
+   reachable twice (two parents, a cycle) is drawn in full once and then marked "shown above".
+   Findings about the chain itself are listed above the tree.
+3. A node: its findings with evidence, observations, and its edges with evidence.
+
+Exit codes of `lock`: 0 written, 1 not written because of `error` findings, 2 xdq could not
+complete (invalid config, or a source was unavailable).
 
 Exit codes of `check`:
 
@@ -438,8 +500,9 @@ order-flow  ERROR
            stand-a  deployment/billing  partitions 0,1,2
            stand-b  deployment/billing  partitions 3,4,5
 
-  ERROR  drift: edge removed  topic:main/orders.created -> group:main/billing
-         possibly renamed or mistyped: orders.created -> orders.creatd
+  ERROR  drift-edge-removed  topic:main/orders.created, group:main/billing
+         locked consumer edge is no longer discovered
+         possibly renamed or mistyped: topic:main/orders.created -> topic:main/orders.creatd
 ```
 
 The JSON output is the `Report` (§13.3). Its schema is versioned and is the contract for CI,
@@ -483,9 +546,11 @@ internal/source/postgres/
 internal/resolve/        cross-source joining (§7)
 internal/rule/           invariants (§9.1)
 internal/lock/           read, write, diff (§9.2, §10)
+internal/distance/       edit distance for "did you mean" hints (rules and drift)
 internal/report/         Report, findings, status aggregation
 internal/engine/         runs the pipeline; used by CLI and the future service
 internal/tui/            Bubble Tea UI, renders a Report
+internal/style/          terminal styles shared by the text output and the TUI
 ```
 
 Source contract (sketch):
@@ -549,7 +614,7 @@ Service mode is not built in the MVP, but the design must not block it:
 
 ## 16. Open questions
 
-1. Exact lockfile syntax: YAML flow mappings (as above) or a line-based format.
+1. Decided: the lockfile is YAML with one flow mapping per edge (§10).
 2. Do chains need `until` selectors to stop the walk at shared fan-out topics (e.g. an audit
    topic consumed by everyone)? Decide after trying real graphs.
 3. Should Kafka topics and groups be able to belong to an environment (environment-prefixed
@@ -557,3 +622,7 @@ Service mode is not built in the MVP, but the design must not block it:
 4. Default rule severities and the lag threshold need validation on real setups.
 5. Behaviour when identity sources have overlapping address spaces (several clusters with the
    same pod CIDR).
+6. CronJobs and Jobs are invisible between runs: without pods the workload is not discovered
+   (§6.2), and without sessions it has no `connection` edges (§6.3). A single CLI snapshot cannot
+   fix this. Options: read the pod template of CronJobs, or accumulate observations over a time
+   window in service mode.

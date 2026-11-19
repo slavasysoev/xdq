@@ -10,6 +10,7 @@ import (
 
 	"github.com/slavasysoev/xdq/internal/config"
 	"github.com/slavasysoev/xdq/internal/graph"
+	"github.com/slavasysoev/xdq/internal/lock"
 	"github.com/slavasysoev/xdq/internal/report"
 	"github.com/slavasysoev/xdq/internal/resolve"
 	"github.com/slavasysoev/xdq/internal/rule"
@@ -22,13 +23,21 @@ type Engine struct {
 	sources []source.Source
 	rules   *rule.Set
 	chains  map[string]config.ChainConfig
+	locked  *lock.File
 	timeout time.Duration
 }
 
 // New creates an engine. Chains are the chains to check; none means the implicit chain.
-// Timeout limits each source's Discover separately.
-func New(sources []source.Source, rules *rule.Set, chains map[string]config.ChainConfig, timeout time.Duration) *Engine {
-	return &Engine{sources: sources, rules: rules, chains: chains, timeout: timeout}
+// Locked is the lockfile to compare the chains with, nil for none; it holds only the checked
+// chains and those no longer configured. Timeout limits each source's Discover separately.
+func New(
+	sources []source.Source,
+	rules *rule.Set,
+	chains map[string]config.ChainConfig,
+	locked *lock.File,
+	timeout time.Duration,
+) *Engine {
+	return &Engine{sources: sources, rules: rules, chains: chains, locked: locked, timeout: timeout}
 }
 
 // discovery is the outcome of discovering one source.
@@ -61,6 +70,12 @@ func (engine *Engine) Run(ctx context.Context, environment string) report.Report
 	complete := !slices.ContainsFunc(results, func(result report.SourceResult) bool { return result.Status != report.StatusOK })
 	chains, chainFindings := extractChains(engine.chains, merged, environment, complete)
 	findings = append(findingsInChains(findings, chains), chainFindings...)
+	// Drift needs the whole graph: the edges of a missing source would all look removed.
+	if engine.locked != nil && complete {
+		drift := lock.Diff(*engine.locked, chains)
+		findings = append(findings, drift...)
+		chains = append(chains, chainsOnlyInFindings(drift, chains)...)
+	}
 
 	return report.New(environment, results, chains, findings)
 }
