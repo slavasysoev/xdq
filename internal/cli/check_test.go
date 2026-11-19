@@ -51,6 +51,7 @@ sources:
 
 func TestCheckFailsBeforeDiscovery(t *testing.T) {
 	kubernetes := writeConfig(t, "version: 1\nsources:\n  test:\n    kubernetes: {}\n")
+	unknownRule := writeConfig(t, unreachableKafka+"rules:\n  stalled-consumers:\n    severity: off\n")
 	tests := []struct {
 		name      string
 		args      []string
@@ -60,6 +61,7 @@ func TestCheckFailsBeforeDiscovery(t *testing.T) {
 		{name: "unknown output", args: []string{"--output", "yaml"}, wantError: `invalid --output "yaml"`},
 		{name: "zero timeout", args: []string{"--timeout", "0s"}, wantError: "invalid --timeout"},
 		{name: "source type not implemented", args: []string{"--config", kubernetes}, wantError: "kubernetes sources are not implemented yet"},
+		{name: "unknown rule", args: []string{"--config", unknownRule}, wantError: "rules.stalled-consumers: unknown rule"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

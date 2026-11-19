@@ -11,6 +11,10 @@ import (
 
 // Secret is a credential referenced from the config as ${env:NAME} or ${file:path}.
 // Its String method returns the reference, so printing a config never reveals the value.
+// Mixed receivers are intentional: Value and String stay on values so fmt never prints the value,
+// while resolve and UnmarshalYAML need a pointer to store the value.
+//
+//nolint:recvcheck // See the comment above.
 type Secret struct {
 	reference string
 	value     string

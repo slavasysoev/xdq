@@ -14,6 +14,7 @@ import (
 	"github.com/slavasysoev/xdq/internal/config"
 	"github.com/slavasysoev/xdq/internal/engine"
 	"github.com/slavasysoev/xdq/internal/report"
+	"github.com/slavasysoev/xdq/internal/rule"
 )
 
 type checkOptions struct {
@@ -55,6 +56,11 @@ func runCheck(ctx context.Context, stdout io.Writer, options checkOptions) (err 
 	if err != nil {
 		return err
 	}
+	// Rules are validated before any source is contacted: a typo in a rule name fails fast.
+	rules, err := rule.NewSet(configuration.Rules)
+	if err != nil {
+		return fmt.Errorf("config %s:\n%w", options.configPath, err)
+	}
 	sources, err := openSources(configuration)
 	if err != nil {
 		return err
@@ -63,7 +69,7 @@ func runCheck(ctx context.Context, stdout io.Writer, options checkOptions) (err 
 		err = errors.Join(err, closeSources(sources))
 	}()
 
-	result := engine.New(sources, options.timeout).Run(ctx, "")
+	result := engine.New(sources, rules, options.timeout).Run(ctx, "")
 
 	if options.output == outputJSON {
 		err = writeJSON(stdout, &result)

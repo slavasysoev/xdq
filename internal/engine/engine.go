@@ -9,6 +9,7 @@ import (
 
 	"github.com/slavasysoev/xdq/internal/graph"
 	"github.com/slavasysoev/xdq/internal/report"
+	"github.com/slavasysoev/xdq/internal/rule"
 	"github.com/slavasysoev/xdq/internal/source"
 )
 
@@ -19,12 +20,13 @@ const chainAll = "all"
 // It does not own the sources: the caller opens and closes them.
 type Engine struct {
 	sources []source.Source
+	rules   *rule.Set
 	timeout time.Duration
 }
 
 // New creates an engine. Timeout limits each source's Discover separately.
-func New(sources []source.Source, timeout time.Duration) *Engine {
-	return &Engine{sources: sources, timeout: timeout}
+func New(sources []source.Source, rules *rule.Set, timeout time.Duration) *Engine {
+	return &Engine{sources: sources, rules: rules, timeout: timeout}
 }
 
 // discovery is the outcome of discovering one source.
@@ -52,9 +54,11 @@ func (engine *Engine) Run(ctx context.Context, environment string) report.Report
 		results[index] = discovered.result
 		snapshots[index] = discovered.snapshot
 	}
-	chains := []report.Chain{report.NewChain(chainAll, graph.Merge(snapshots...))}
+	merged := graph.Merge(snapshots...)
+	findings := engine.rules.Check(rule.Input{Graph: merged, Sources: results, Now: time.Now()})
+	chains := []report.Chain{report.NewChain(chainAll, merged)}
 
-	return report.New(environment, results, chains, nil)
+	return report.New(environment, results, chains, findings)
 }
 
 func (engine *Engine) discover(ctx context.Context, discovered source.Source) discovery {

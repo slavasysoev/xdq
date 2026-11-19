@@ -10,6 +10,7 @@ import (
 
 	"github.com/slavasysoev/xdq/internal/graph"
 	"github.com/slavasysoev/xdq/internal/report"
+	"github.com/slavasysoev/xdq/internal/rule"
 	"github.com/slavasysoev/xdq/internal/source"
 )
 
@@ -57,7 +58,7 @@ func TestRunAllSourcesAvailable(t *testing.T) {
 	engine := New([]source.Source{
 		returning("main", "kafka", kafkaSnapshot, nil),
 		returning("db", "postgres", postgresSnapshot, nil),
-	}, time.Second)
+	}, &rule.Set{}, time.Second)
 
 	result := engine.Run(t.Context(), "stand-a")
 
@@ -85,7 +86,7 @@ func TestRunOneSourceFails(t *testing.T) {
 	engine := New([]source.Source{
 		returning("main", "kafka", kafkaSnapshot, nil),
 		returning("db", "postgres", postgresSnapshot, errors.New("connection refused")),
-	}, time.Second)
+	}, &rule.Set{}, time.Second)
 
 	result := engine.Run(t.Context(), "")
 
@@ -110,7 +111,7 @@ func TestRunSourceTimeout(t *testing.T) {
 
 		return graph.Snapshot{}, ctx.Err()
 	}}
-	engine := New([]source.Source{hanging}, 10*time.Millisecond)
+	engine := New([]source.Source{hanging}, &rule.Set{}, 10*time.Millisecond)
 
 	result := engine.Run(t.Context(), "")
 
@@ -142,7 +143,7 @@ func TestRunInParallel(t *testing.T) {
 	engine := New([]source.Source{
 		fakeSource{name: "first", sourceType: "kafka", discover: discover},
 		fakeSource{name: "second", sourceType: "kafka", discover: discover},
-	}, 5*time.Second)
+	}, &rule.Set{}, 5*time.Second)
 
 	result := engine.Run(t.Context(), "")
 
@@ -154,12 +155,35 @@ func TestRunInParallel(t *testing.T) {
 }
 
 func TestRunCanRepeat(t *testing.T) {
-	engine := New([]source.Source{returning("main", "kafka", kafkaSnapshot, nil)}, time.Second)
+	engine := New([]source.Source{returning("main", "kafka", kafkaSnapshot, nil)}, &rule.Set{}, time.Second)
 
 	first := engine.Run(t.Context(), "")
 	second := engine.Run(t.Context(), "")
 
 	if len(first.Chains[0].Nodes) != len(second.Chains[0].Nodes) {
 		t.Error("a second run gives a different graph")
+	}
+}
+
+func TestRunChecksRules(t *testing.T) {
+	stalled := graph.NewSnapshot()
+	stalled.Nodes = []graph.Node{graph.NewTopic("main", "orders"), graph.NewGroup("main", "billing")}
+	stalled.Observations.Groups[graph.GroupID("main", "billing")] = graph.GroupObservation{
+		State: "Empty",
+		Lag:   map[graph.NodeID]int64{graph.TopicID("main", "orders"): 4},
+	}
+	rules, err := rule.NewSet(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	engine := New([]source.Source{returning("main", "kafka", stalled, nil)}, rules, time.Second)
+
+	result := engine.Run(t.Context(), "")
+
+	if !result.HasErrors() || result.Findings[0].Rule != "stalled-consumer" {
+		t.Fatalf("findings = %+v, want stalled-consumer", result.Findings)
+	}
+	if result.Status != report.StatusError {
+		t.Errorf("status = %s, want error", result.Status)
 	}
 }

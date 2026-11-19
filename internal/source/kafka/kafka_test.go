@@ -14,6 +14,7 @@ import (
 
 	"github.com/slavasysoev/xdq/internal/config"
 	"github.com/slavasysoev/xdq/internal/graph"
+	"github.com/slavasysoev/xdq/internal/rule"
 	"github.com/slavasysoev/xdq/internal/source"
 )
 
@@ -131,6 +132,24 @@ func TestDiscover(t *testing.T) {
 		auditObservation := snapshot.Observations.Groups[audit]
 		if len(auditObservation.Members) != 1 || auditObservation.Members[0].ClientID != "audit-1" {
 			t.Errorf("audit members = %+v, want audit-1", auditObservation.Members)
+		}
+	})
+
+	t.Run("rules on the real cluster", func(t *testing.T) {
+		rules, err := rule.NewSet(nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var got []string
+		for _, finding := range rules.Check(rule.Input{Graph: snapshot, Now: time.Now()}) {
+			got = append(got, finding.Rule+" "+string(finding.Subjects[0]))
+		}
+		want := []string{
+			"stalled-consumer " + string(stalled),
+			"empty-subscription " + string(audit),
+		}
+		if !slices.Equal(got, want) {
+			t.Errorf("findings = %v, want %v", got, want)
 		}
 	})
 

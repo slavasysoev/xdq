@@ -40,7 +40,7 @@
         {
           "from": "topic:main/orders.created",
           "to": "group:main/billing",
-          "kind": "subscription",
+          "kind": "consumer",
           "confidence": "observed",
           "evidence": [
             {

@@ -274,6 +274,20 @@ Rules work without a lockfile, from the first run.
 Severity of each rule can be overridden or turned off in the config. Idle topics (no traffic)
 are **not** a warning, because idle test environments are normal.
 
+Details:
+
+- `stalled-consumer` and `lagging-consumer` are independent: a stalled group over the threshold
+  gets both findings.
+- `empty-subscription`: "never received a record" means every end offset is 0. A topic whose
+  records expired by retention did receive records.
+- `unconsumed-topic`: "receives records" means the latest record is at most 7 days old. Topics
+  starting with `_` (`__consumer_offsets`, `_schemas`, ...) are skipped.
+- `unresolved-client` runs only when at least one Kubernetes source is configured and every
+  Kubernetes source answered. Without identities every endpoint is unresolved, and reporting
+  each of them would only repeat that.
+- An unknown rule name in the config, or a `threshold` on a rule without one, is a config error.
+  Rules that are specified but not implemented yet are accepted.
+
 ### 9.2 Drift (requires a lockfile)
 
 Comparison of each chain's current edges with the locked edges:
