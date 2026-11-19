@@ -5,21 +5,20 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/testcontainers/testcontainers-go"
-	postgrescontainer "github.com/testcontainers/testcontainers-go/modules/postgres"
 
 	"github.com/slavasysoev/xdq/internal/config"
 	"github.com/slavasysoev/xdq/internal/graph"
 	"github.com/slavasysoev/xdq/internal/source"
+	"github.com/slavasysoev/xdq/internal/testenv"
 )
 
 const (
-	postgresImage = "postgres:17-alpine"
-	sourceName    = "orders-db"
+	sourceName = "orders-db"
 	// password is used for every role in the tests; errors must never show it.
 	password = "pa55-Word"
 )
@@ -100,20 +99,8 @@ func TestErrorsHidePassword(t *testing.T) {
 // TestDiscover runs against a real server: the role app holds two sessions to the database orders,
 // and xdq connects to the database postgres as a role with pg_monitor.
 func TestDiscover(t *testing.T) {
-	if testing.Short() {
-		t.Skip("integration test: needs Docker")
-	}
 	ctx := t.Context()
-	container, err := postgrescontainer.Run(ctx, postgresImage,
-		postgrescontainer.WithDatabase("orders"),
-		postgrescontainer.WithUsername("app"),
-		postgrescontainer.WithPassword(password),
-		postgrescontainer.BasicWaitStrategies(),
-	)
-	testcontainers.CleanupContainer(t, container)
-	if err != nil {
-		t.Fatalf("start postgres: %v", err)
-	}
+	container := testenv.StartPostgres(t, "orders", "app", password)
 	appDSN, err := container.ConnectionString(ctx, "sslmode=disable")
 	if err != nil {
 		t.Fatalf("connection string: %v", err)
@@ -168,6 +155,46 @@ func TestDiscover(t *testing.T) {
 
 		if err == nil || !strings.Contains(err.Error(), "grant pg_monitor to plain") {
 			t.Errorf("error = %v, want it to ask for pg_monitor", err)
+		}
+	})
+
+	// Templates are not nodes. The database postgres is a node without clients: only xdq is
+	// connected to it.
+	t.Run("databases", func(t *testing.T) {
+		snapshot := discover(t, roleDSN(t, appDSN, "monitor"))
+
+		var databases []graph.NodeID
+		for _, node := range snapshot.Nodes {
+			if node.ID.Kind() == graph.NodeDatabase {
+				databases = append(databases, node.ID)
+			}
+		}
+		slices.Sort(databases)
+		want := []graph.NodeID{graph.DatabaseID(sourceName, "orders"), graph.DatabaseID(sourceName, "postgres")}
+		if !slices.Equal(databases, want) {
+			t.Errorf("databases = %v, want %v", databases, want)
+		}
+	})
+
+	t.Run("read-only session named xdq", func(t *testing.T) {
+		postgresSource, err := openSource(t, roleDSN(t, appDSN, "monitor"))
+		if err != nil {
+			t.Fatalf("New: %v", err)
+		}
+
+		var readOnly, name string
+		err = postgresSource.pool.QueryRow(ctx,
+			"SELECT current_setting('default_transaction_read_only'), current_setting('application_name')",
+		).Scan(&readOnly, &name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if readOnly != "on" || name != applicationName {
+			t.Errorf("default_transaction_read_only = %s, application_name = %s, want on, %s", readOnly, name, applicationName)
+		}
+		_, err = postgresSource.pool.Exec(ctx, "CREATE TABLE written_by_xdq (id int)")
+		if err == nil || !strings.Contains(err.Error(), "read-only transaction") {
+			t.Errorf("CREATE TABLE error = %v, want a read-only transaction error", err)
 		}
 	})
 }

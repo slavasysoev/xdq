@@ -7,6 +7,8 @@ import (
 	"slices"
 	"strings"
 	"time"
+
+	"github.com/twmb/franz-go/pkg/kadm"
 )
 
 // clusterState is the raw answer of the cluster, before it is turned into a graph.
@@ -118,24 +120,12 @@ func (source *Source) fetchTopics(ctx context.Context) (map[string]topicState, e
 }
 
 // fetchGroups describes consumer groups of both protocols and their committed offsets.
-// Kafka Connect, share and streams groups are skipped.
 func (source *Source) fetchGroups(ctx context.Context) (map[string]groupState, error) {
 	listed, err := source.admin.ListGroups(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("list groups: %w", err)
 	}
-	var classicGroups, consumerGroups []string
-	for _, group := range listed.Sorted() {
-		switch {
-		case group.GroupType == groupTypeConsumer:
-			consumerGroups = append(consumerGroups, group.Group)
-		// GroupType is empty on brokers older than 3.8. An empty protocol type is a group that
-		// only commits offsets (manual assignment, e.g. Spark or Flink).
-		case (group.GroupType == groupTypeClassic || group.GroupType == "") &&
-			(group.ProtocolType == protocolTypeConsumer || group.ProtocolType == ""):
-			classicGroups = append(classicGroups, group.Group)
-		}
-	}
+	classicGroups, consumerGroups := selectGroups(listed)
 
 	groups, err := source.describeClassicGroups(ctx, classicGroups)
 	if err != nil {
@@ -159,6 +149,24 @@ func (source *Source) fetchGroups(ctx context.Context) (map[string]groupState, e
 	}
 
 	return groups, nil
+}
+
+// selectGroups returns the names of the classic and the KIP-848 consumer groups, sorted.
+// Kafka Connect, share and streams groups are skipped.
+func selectGroups(listed kadm.ListedGroups) (classicGroups, consumerGroups []string) {
+	for _, group := range listed.Sorted() {
+		switch {
+		case group.GroupType == groupTypeConsumer:
+			consumerGroups = append(consumerGroups, group.Group)
+		// GroupType is empty on brokers older than 3.8. An empty protocol type is a group that
+		// only commits offsets (manual assignment, e.g. Spark or Flink).
+		case (group.GroupType == groupTypeClassic || group.GroupType == "") &&
+			(group.ProtocolType == protocolTypeConsumer || group.ProtocolType == ""):
+			classicGroups = append(classicGroups, group.Group)
+		}
+	}
+
+	return classicGroups, consumerGroups
 }
 
 func (source *Source) describeClassicGroups(ctx context.Context, names []string) (map[string]groupState, error) {

@@ -7,8 +7,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/testcontainers/testcontainers-go"
-	kafkacontainer "github.com/testcontainers/testcontainers-go/modules/kafka"
 	"github.com/twmb/franz-go/pkg/kadm"
 	"github.com/twmb/franz-go/pkg/kgo"
 
@@ -16,10 +14,8 @@ import (
 	"github.com/slavasysoev/xdq/internal/graph"
 	"github.com/slavasysoev/xdq/internal/rule"
 	"github.com/slavasysoev/xdq/internal/source"
+	"github.com/slavasysoev/xdq/internal/testenv"
 )
-
-// Confluent Platform 8.1 is Kafka 4.1: it supports MAX_TIMESTAMP and KIP-848 consumer groups.
-const kafkaImage = "confluentinc/confluent-local:8.1.0"
 
 const sourceName = "main"
 
@@ -34,11 +30,8 @@ var _ source.Source = (*Source)(nil)
 //   - stalled: a group without members that committed partition 0 at 2 and partition 1 at 4.
 //   - audit: KIP-848 group with an active member on orders.creatd.
 func TestDiscover(t *testing.T) {
-	if testing.Short() {
-		t.Skip("integration test: needs Docker")
-	}
 	ctx := t.Context()
-	brokers := startKafka(t)
+	brokers := testenv.StartKafka(t)
 	setupCluster(t, brokers)
 
 	snapshot, err := newSource(t, brokers).Discover(ctx)
@@ -192,21 +185,6 @@ func newSource(t *testing.T, brokers []string) *Source {
 	})
 
 	return kafkaSource
-}
-
-func startKafka(t *testing.T) []string {
-	t.Helper()
-	container, err := kafkacontainer.Run(t.Context(), kafkaImage)
-	testcontainers.CleanupContainer(t, container)
-	if err != nil {
-		t.Fatalf("start kafka: %v", err)
-	}
-	brokers, err := container.Brokers(t.Context())
-	if err != nil {
-		t.Fatalf("brokers: %v", err)
-	}
-
-	return brokers
 }
 
 // setupCluster creates the topics, records and groups described on TestDiscover.

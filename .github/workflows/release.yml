@@ -20,6 +20,9 @@ jobs:
         with:
           go-version-file: go.mod
 
+      # A tag is released only when every test passes, the integration tests included.
+      - run: go test ./...
+
       - uses: goreleaser/goreleaser-action@v6
         with:
           distribution: goreleaser

@@ -49,7 +49,8 @@ is not written by hand but captured from a moment when everything worked.
 ## 3. Principles
 
 1. **Config says where to look, never what is there.** The config file contains connection
-   details and scoping only. The topology comes from discovery.
+   details and scoping only: chain entries and rule exceptions are selectors (§8.1), not a
+   description of the topology. The topology comes from discovery.
 2. **Every edge has evidence.** For each edge xdq can say which source reported it and why.
    Inferred edges are marked as inferred.
 3. **The lockfile is captured, not written.** `xdq lock` on an unchanged system produces a
@@ -128,8 +129,9 @@ Volatile measurements attached to nodes and edges. They feed rules and the UI, a
 never stored in the lockfile:
 
 - topic: partitions, end offsets, timestamp of the latest record;
-- group: state (Stable, Empty, Rebalancing, Dead), lag per topic, partitions per member;
-- workload: ready replicas.
+- group: state (Stable, Empty, Rebalancing, Dead), committed offset per partition, lag per topic,
+  partitions per member;
+- workload: pods, ready pods, and the reason of every pod that is not ready.
 
 The number of sessions per database client is not an observation: it is in the evidence of the
 `connection` edge, e.g. "2 sessions as user billing".
@@ -170,6 +172,11 @@ Identity source and configuration source.
   scaled to 0) is not discovered. Finished pods (`Succeeded`, `Failed`) are skipped.
 - Maps the IPs of running pods to workloads. Pods with `hostNetwork: true` are skipped for IP
   mapping because their IP is not unique.
+- Counts the pods of each workload and the ready ones (pod condition `Ready`). For a pod that is
+  not ready it records the reason and the number of container restarts. The reason is the waiting
+  reason of a container (`CrashLoopBackOff`, `ImagePullBackOff`, `CreateContainerConfigError`),
+  `Unschedulable` for a pod that is not scheduled, otherwise `NotReady` (a running pod that fails
+  its readiness probe).
 - Assigns an environment to each workload: `namespace` (default) or `label:<key>`. With a label,
   the newest pod of the workload decides (during a rollout old pods may still carry the old
   value). A workload without the label has no environment.
@@ -260,6 +267,37 @@ A selector matches nodes by kind and name, optionally restricted by `source`. Wo
 selectors match only within the selected environment. Without `--env` there is no environment
 boundary: every workload is selected and expanded.
 
+**Environment in names.** When names carry the environment (one Kafka for all stands, topics
+`stand-a.orders.created` and `stand-b.orders.created`), `{env}` in a selector name is replaced
+with the value of `--env`, so one definition still serves every environment:
+
+```yaml
+chains:
+  order-flow:
+    from:
+      - topic: "{env}.orders.created"
+```
+
+The value has to be quoted: YAML reads a plain value that starts with `{` as a mapping. `{env}`
+works in every selector (`from`, `until`, rule `ignore`). A selector with `{env}` without `--env`
+is an error before any source is contacted (exit code 2).
+
+**Stop nodes.** Nodes that match `until` are included in the chain but not expanded, like
+workloads of other environments (§8.2). They are for fan-out nodes that would pull everything into
+the chain, e.g. an audit topic consumed by every service:
+
+```yaml
+chains:
+  order-flow:
+    from:
+      - topic: orders.created
+    until:
+      - topic: audit.events
+```
+
+An `until` selector that matches no node is not a finding: there is just nothing to stop at.
+Changing `from` or `until` changes the edges of the chain, so the chain has to be locked again.
+
 An entry that matches no node gives the error finding `chain-entry-not-found` on its chain: a
 chain that cannot be found cannot be green. It is reported only when every source answered;
 otherwise the node may be in the missing source and the chain is `unknown` anyway.
@@ -278,6 +316,7 @@ Breadth-first walk along edge direction from the entry nodes:
   expanded**. A member from another environment is visible in the chain, which is exactly the
   stolen-messages case.
 - Databases are terminal.
+- Nodes matched by `until` are included but not expanded.
 - Cycles are handled with a visited set.
 
 A workload of the selected environment in the chain with no outgoing edges is marked as a
@@ -288,8 +327,11 @@ does not change any status: it may be a legitimate end of the chain or a missing
 ### 8.3 What "green" means
 
 In v1 a green chain means: every hop is wired as in the known-good state, no invariant is
-violated, and nothing is stuck. It does **not** prove that a specific unit of work is processed
-correctly (a consumer may still fail on every message). Unit tracking is on the roadmap.
+violated, and nothing is stuck. From one discovery, "stuck" means a backlog without consumers; a
+consumer that has members but does not move is seen only with `--sample` (`stuck-consumer`,
+§9.1). A green chain does **not** prove that a specific unit of work is processed correctly: a
+consumer may still fail on every message. Records arriving in a dead-letter topic
+(`dead-letter-records`, §9.1) are the only hint of that in v1. Unit tracking is on the roadmap.
 
 ## 9. Checks
 
@@ -303,23 +345,57 @@ Rules work without a lockfile, from the first run.
 | `group-multiple-workloads` | warning | A group has members from more than one workload in the same environment (may be a legitimate canary). |
 | `database-spans-environments` | error | A database has clients from workloads in more than one environment (a service points to the database of another environment). |
 | `unresolved-client` | error for group members, warning for DB clients | An endpoint could not be resolved to a workload (e.g. a developer laptop consuming from a test cluster). |
+| `workload-not-ready` | error | A workload has pods, but none of them is ready (crash loop, image pull failure, not scheduled). |
 | `stalled-consumer` | error | A group has lag > 0 and no active members. |
+| `stuck-consumer` | error | Only with `--sample`: a group has active members and lag on a partition, but its committed offset there did not move during the sample. |
 | `lagging-consumer` | warning | Group lag on a topic exceeds a threshold (default 1000). |
 | `empty-subscription` | warning | A group is subscribed to a topic that has never received a record (typical for an auto-created topic with a typo). |
 | `near-miss-topic` | warning | A workload's config references a name that is 1–2 edits away from a topic that receives records, and the name itself is not a topic in use. |
 | `unconsumed-topic` | warning | A topic in a chain receives records but has no subscription. |
+| `dead-letter-records` | warning | A dead-letter topic received a record recently (default: within 1 hour). |
 
-Severity of each rule can be overridden or turned off in the config. Idle topics (no traffic)
-are **not** a warning, because idle test environments are normal.
+Severity of each rule can be overridden or turned off in the config, and single findings can be
+ignored (see Exceptions below). Idle topics (no traffic) are **not** a warning, because idle test
+environments are normal.
 
 Details:
 
 - `stalled-consumer` and `lagging-consumer` are independent: a stalled group over the threshold
   gets both findings.
+- `workload-not-ready`: only a workload without any ready pod is reported. Fewer ready pods than
+  pods is normal during a rollout or scaling, and the ready pods keep working. The evidence lists
+  every pod that is not ready with its reason and restarts (§6.2); pod names appear only in the
+  evidence and are never locked. A workload scaled to 0 has no pods and is not discovered at all
+  (§6.2): its edges disappear, which only drift reports.
+- `stuck-consumer` needs two discoveries, so it runs only with `--sample <duration>`. xdq then
+  discovers every source twice, the duration apart. The graph and every other finding come from
+  the second discovery; the first is used only for committed offsets.
+  - A partition is stuck when the group has members in both discoveries, the partition is
+    committed in both with the same offset, and it has lag in the second. One finding per group
+    and topic lists the stuck partitions.
+  - This also catches a group that keeps rebalancing because a consumer exceeds
+    `max.poll.interval.ms`: it has members but commits nothing.
+  - The duration must be longer than the commit interval of the consumers. Kafka clients commit
+    every 5 s by default and Kafka Streams every 30 s; consumers that commit on a checkpoint may
+    take minutes. A shorter sample reports consumers that are only between two commits.
+  - A source that fails in either discovery is unavailable for the run.
 - `empty-subscription`: "never received a record" means every end offset is 0. A topic whose
   records expired by retention did receive records.
 - `unconsumed-topic`: "receives records" means the latest record is at most 7 days old. Topics
   starting with `_` (`__consumer_offsets`, `_schemas`, ...) are skipped.
+- `dead-letter-records`:
+  - A dead-letter topic is a topic whose name ends with a dead-letter suffix, compared ignoring
+    case. The default suffixes are `.dlt`, `-dlt`, `_dlt`, `.dlq`, `-dlq` and `_dlq` (Spring Kafka
+    writes to `<topic>.DLT`, and its retry topics end in `-dlt`). `suffixes` in the rule's config
+    replaces the list.
+  - The name without the suffix is the base topic, in the same source. The finding's subjects are
+    both topics, so it is shown in a chain that contains the base topic. The walk usually does not
+    reach the dead-letter topic itself: frameworks derive its name in code, so it is not in the
+    configuration. Without a base topic, the dead-letter topic is the only subject.
+  - "Recently" means the latest record is at most `window` old (default `1h`).
+  - It is a warning, not an error: tests of error paths send bad records on purpose.
+  - `empty-subscription` and `unconsumed-topic` skip dead-letter topics, also when this rule is
+    off: a dead-letter topic without records or without consumers is the normal state.
 - `unresolved-client` runs only when at least one Kubernetes source is configured and every
   Kubernetes source answered. Without identities every endpoint is unresolved, and reporting
   each of them would only repeat that.
@@ -328,7 +404,34 @@ Details:
   the name exists. Only topics with records are suggested, at most one edit away for names
   shorter than 10 characters, two for longer ones. Names shorter than 5 characters and topics
   starting with `_` are not suggested: they are a few edits away from too many ordinary words.
-- An unknown rule name in the config, or a `threshold` on a rule without one, is a config error.
+- An unknown rule name in the config, or a `threshold`, `window` or `suffixes` on a rule without
+  one, is a config error.
+
+**Exceptions.** Some findings are correct but expected: a canary that shares the group of its
+main deployment, a client on a VM outside Kubernetes, an old group whose offsets nobody will
+consume. Turning the whole rule off would hide every other case too, so a rule takes a list of
+selectors to ignore:
+
+```yaml
+rules:
+  group-multiple-workloads:
+    ignore:
+      - group: billing          # the canary shares the group on purpose
+  unresolved-client:
+    ignore:
+      - endpoint: 10.20.0.0/16  # VMs outside Kubernetes
+```
+
+- The selectors are those of chains (§8.1), plus `endpoint` with an address or a CIDR range.
+- A finding is ignored when any of its subjects matches. An ignored workload therefore hides the
+  whole finding about its group, also when another member is a real problem: name the most
+  specific subject.
+- Unlike in chain entries, a workload selector here matches in every environment: the workload to
+  ignore is often in another one.
+- Ignored findings stay in the report, marked `ignored`. They count in no status and do not stop
+  `xdq lock`. The text output prints how many findings of a chain are ignored, and the TUI shows
+  them on the node screen: a green chain must stay explainable.
+- Drift findings and `chain-entry-not-found` cannot be ignored.
 
 ### 9.2 Drift (requires a lockfile)
 
@@ -385,7 +488,8 @@ Details:
 - Edges to and from endpoints are not stored: an endpoint ID is an address, which changes with
   every restart of a pod. Unresolved clients are reported by `unresolved-client`.
 - `check` compares with the default lockfile only when it exists. A lockfile named by `--lock`
-  must exist. A lockfile of another environment than `--env` is an error (exit code 2).
+  must exist. A lockfile of another environment than `--env` is an error (exit code 2); use
+  `--reference` to compare with another environment on purpose.
 - Values are written plain when that reads back as the same string, double-quoted otherwise
   (e.g. a group name with `: `). The first line is a comment that the file is generated.
 
@@ -404,6 +508,28 @@ chains:
 
 Replica counts are not locked: autoscaling would make the lockfile change all the time.
 A lockfile stores *that* a workload is a member, not *how many* instances are.
+
+**Reference environment.** A new or broken stand may never have had a known-good state to lock.
+`--reference <lockfile>` compares the chains with the lockfile of another environment instead,
+e.g. `xdq check --env stand-b --reference locks/stand-a.lock`. Before the comparison, the
+reference environment is replaced with the value of `--env` in the name part of every locked ID
+(after `<source>/`), wherever it is a whole part of the name: bounded by the start, the end, or a
+character that is not a letter or a digit.
+
+```
+workload:test/stand-a/deployment/billing  ->  workload:test/stand-b/deployment/billing
+topic:main/stand-a.orders.created         ->  topic:main/stand-b.orders.created
+topic:main/orders.created                 ->  unchanged
+```
+
+- `--reference` needs `--env` and a lockfile with an environment, and cannot be combined with
+  `--lock`. Otherwise the run fails before any source is contacted (exit code 2).
+- The findings are the drift findings of §9.2 with the same severities; their messages name the
+  reference environment.
+- A name that carries the environment in another form (`orders_stand_a` for `stand-a`) is not
+  replaced. It shows up as a removed and an added edge, usually with the rename hint.
+- The replacement needs a distinctive environment name. With environments `test` and `dev`, a
+  shared topic `test-results` would become `dev-results` and be reported as removed.
 
 ## 11. Configuration
 
@@ -450,6 +576,9 @@ rules:
     severity: off
   lagging-consumer:
     threshold: 5000
+  unresolved-client:
+    ignore:
+      - endpoint: 10.20.0.0/16
 ```
 
 ## 12. CLI
@@ -461,11 +590,14 @@ rules:
 | `xdq` (no args) | Interactive TUI. |
 
 Common flags of `xdq`, `check` and `lock`: `--config`, `--env`, `--lock`, `--timeout` (per source,
-default 10s). `check` also has `--chain` (repeatable) and `--output text|json`; `lock` has
+default 10s). `xdq` and `check` also have `--sample <duration>` (check that consumers move,
+`stuck-consumer` in §9.1; off by default) and `--reference <lockfile>` (compare with another
+environment, §10). `check` also has `--chain` (repeatable) and `--output text|json`; `lock` has
 `--force`.
 
 The TUI loads the config and opens the sources once; an invalid config fails before it starts.
-It checks on start and on `r`, keeping the old report on screen while a check runs. Screens, from
+It checks on start and on `r`, keeping the old report on screen while a check runs; with
+`--sample`, every check takes the sample duration longer. Screens, from
 Enter to Enter, Esc back:
 
 1. Chains, the worst first, with the overall status and the status of every source.
@@ -515,6 +647,7 @@ the TUI and the future web UI.
 ```
  config ──► sources (parallel, per-source timeout, read-only)
               │  Snapshot per source
+              │  (with --sample: discovered twice, the sample apart; offsets of both compared)
               ▼
            resolve        endpoints → workloads, config refs → producer edges
               ▼
@@ -551,6 +684,7 @@ internal/report/         Report, findings, status aggregation
 internal/engine/         runs the pipeline; used by CLI and the future service
 internal/tui/            Bubble Tea UI, renders a Report
 internal/style/          terminal styles shared by the text output and the TUI
+internal/testenv/        Kafka and Postgres in Docker for integration tests (test-only)
 ```
 
 Source contract (sketch):
@@ -573,9 +707,11 @@ archived `gopkg.in/yaml.v3`) for config and lockfile.
 
 ### 13.3 Report
 
-Contains: schema version, environment, overall status, per-source status and duration, chains
+Contains: schema version, environment, overall status, per-source status and duration, the
+sample duration (0 without `--sample`, so a reader knows whether movement was checked), chains
 (nodes, edges, observations, status), and findings (rule or drift, severity, subjects, message,
-evidence). The engine returns a `Report` and never prints. Every frontend only renders it.
+evidence, whether ignored). The engine returns a `Report` and never prints. Every frontend only
+renders it.
 
 ### 13.4 Prepared for service mode
 
@@ -609,20 +745,25 @@ Service mode is not built in the MVP, but the design must not block it:
   in topics and tables) or actively (inject a synthetic unit and wait for it at the end).
 - **Service mode:** `xdq serve` runs checks periodically and keeps a history of reports, with an
   HTTP API, a web UI (Vue) and alerts.
-- **Flow over time:** lag trends and stuck consumers detected across samples.
+- **Flow over time:** lag trends across many samples. One run with two samples is `--sample`
+  (§9.1).
 - More auth: AWS MSK IAM, OAUTHBEARER, Kubernetes in-cluster.
 
 ## 16. Open questions
 
 1. Decided: the lockfile is YAML with one flow mapping per edge (§10).
-2. Do chains need `until` selectors to stop the walk at shared fan-out topics (e.g. an audit
-   topic consumed by everyone)? Decide after trying real graphs.
+2. Decided: `until` selectors stop the walk at shared fan-out nodes (§8.1).
 3. Should Kafka topics and groups be able to belong to an environment (environment-prefixed
-   topic names, e.g. `stand-a.orders.created`)?
+   topic names, e.g. `stand-a.orders.created`)? `{env}` (§8.1) lets one chain definition select
+   them, but two gaps remain: xdq cannot report a workload of stand-a that uses a topic of
+   stand-b, and on an idle stand `near-miss-topic` suggests the busy `stand-b.orders.created` for
+   `stand-a.orders.created`, which is one edit away.
 4. Default rule severities and the lag threshold need validation on real setups.
 5. Behaviour when identity sources have overlapping address spaces (several clusters with the
    same pod CIDR).
 6. CronJobs and Jobs are invisible between runs: without pods the workload is not discovered
    (§6.2), and without sessions it has no `connection` edges (§6.3). A single CLI snapshot cannot
    fix this. Options: read the pod template of CronJobs, or accumulate observations over a time
-   window in service mode.
+   window in service mode. A Deployment or StatefulSet scaled to 0 is invisible the same way, so
+   `workload-not-ready` never sees it: reading the controllers (`list` on deployments and
+   statefulsets) would show it as a workload with 0 pods.
