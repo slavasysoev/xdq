@@ -38,11 +38,10 @@ var definitions = []definition{
 	{name: "empty-subscription", check: checkEmptySubscription},
 	{name: "unconsumed-topic", check: checkUnconsumedTopic},
 	{name: "unresolved-client", check: checkUnresolvedClient},
+	{name: "group-spans-environments", check: checkGroupSpansEnvironments},
+	{name: "group-multiple-workloads", check: checkGroupMultipleWorkloads},
+	{name: "near-miss-topic", check: checkNearMissTopic},
 }
-
-// plannedRules are in §9.1 but need sources or resolution that are not implemented yet.
-// They are accepted in the config, so a config written for them keeps working.
-var plannedRules = []string{"group-multiple-workloads", "group-spans-environments", "near-miss-topic"}
 
 // settings is a rule with the overrides from the config applied.
 type settings struct {
@@ -84,8 +83,8 @@ func NewSet(configs map[string]config.RuleConfig) (*Set, error) {
 	var problems []error
 	for _, name := range slices.Sorted(maps.Keys(configs)) {
 		ruleConfig := configs[name]
-		rule, implemented := known[name]
-		if !implemented && !slices.Contains(plannedRules, name) {
+		rule, isKnown := known[name]
+		if !isKnown {
 			problems = append(problems, fmt.Errorf("rules.%s: unknown rule; known rules: %s", name, strings.Join(names(), ", ")))
 
 			continue
@@ -133,7 +132,7 @@ func (set *Set) Check(input Input) []report.Finding {
 
 // names returns the names of all rules the config accepts, sorted.
 func names() []string {
-	all := slices.Clone(plannedRules)
+	var all []string
 	for _, rule := range definitions {
 		all = append(all, rule.name)
 	}

@@ -196,7 +196,7 @@ func TestUnresolvedClient(t *testing.T) {
 }
 
 func threshold(value int) *int {
-	return &value
+	return new(value)
 }
 
 func TestNewSet(t *testing.T) {
@@ -206,11 +206,11 @@ func TestNewSet(t *testing.T) {
 		wantError string
 	}{
 		{name: "defaults", configs: nil},
-		{name: "planned rule turned off", configs: map[string]config.RuleConfig{"group-multiple-workloads": {Severity: config.SeverityOff}}},
-		{name: "threshold override", configs: map[string]config.RuleConfig{"lagging-consumer": {Threshold: threshold(5000)}}},
+		{name: "rule turned off", configs: map[string]config.RuleConfig{"group-multiple-workloads": {Severity: config.SeverityOff}}},
+		{name: "threshold override", configs: map[string]config.RuleConfig{"lagging-consumer": {Threshold: new(5000)}}},
 		{name: "unknown rule", configs: map[string]config.RuleConfig{"stalled-consumers": {}}, wantError: "rules.stalled-consumers: unknown rule; known rules: empty-subscription"},
-		{name: "threshold on a rule without one", configs: map[string]config.RuleConfig{"stalled-consumer": {Threshold: threshold(1)}}, wantError: "rules.stalled-consumer.threshold: rule stalled-consumer has no threshold"},
-		{name: "negative threshold", configs: map[string]config.RuleConfig{"lagging-consumer": {Threshold: threshold(-1)}}, wantError: "rules.lagging-consumer.threshold: must not be negative"},
+		{name: "threshold on a rule without one", configs: map[string]config.RuleConfig{"stalled-consumer": {Threshold: new(1)}}, wantError: "rules.stalled-consumer.threshold: rule stalled-consumer has no threshold"},
+		{name: "negative threshold", configs: map[string]config.RuleConfig{"lagging-consumer": {Threshold: new(-1)}}, wantError: "rules.lagging-consumer.threshold: must not be negative"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

@@ -14,7 +14,7 @@ import (
 // Mixed receivers are intentional: Value and String stay on values so fmt never prints the value,
 // while resolve and UnmarshalYAML need a pointer to store the value.
 //
-//nolint:recvcheck // See the comment above.
+//nolint:recvcheck
 type Secret struct {
 	reference string
 	value     string

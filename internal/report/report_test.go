@@ -76,7 +76,7 @@ func TestNew(t *testing.T) {
 	t.Run("worst finding on a node sets node, chain and report status", func(t *testing.T) {
 		report := New("",
 			[]SourceResult{{Name: "main", Status: StatusOK}, {Name: "db", Status: StatusOK}},
-			[]Chain{NewChain("all", snapshot)},
+			[]Chain{NewChain("all", graph.Subgraph{Snapshot: snapshot})},
 			[]Finding{
 				{Severity: SeverityWarning, Subjects: []graph.NodeID{group.ID}},
 				{Severity: SeverityError, Subjects: []graph.NodeID{group.ID}},
@@ -97,7 +97,7 @@ func TestNew(t *testing.T) {
 	t.Run("unavailable source makes its items and every chain unknown", func(t *testing.T) {
 		report := New("",
 			[]SourceResult{{Name: "main", Status: StatusUnknown}, {Name: "db", Status: StatusOK}},
-			[]Chain{NewChain("all", snapshot)},
+			[]Chain{NewChain("all", graph.Subgraph{Snapshot: snapshot})},
 			nil)
 
 		chain := report.Chains[0]
@@ -118,7 +118,7 @@ func TestNew(t *testing.T) {
 	t.Run("empty chain of a failed run is unknown", func(t *testing.T) {
 		report := New("",
 			[]SourceResult{{Name: "main", Status: StatusUnknown}},
-			[]Chain{NewChain("all", graph.Snapshot{})},
+			[]Chain{NewChain("all", graph.Subgraph{})},
 			nil)
 
 		if report.Status != StatusUnknown {

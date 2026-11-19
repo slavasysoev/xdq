@@ -99,17 +99,20 @@ type is not part of the ID: the source name is unique in the config and identifi
 reported as drift.
 
 Workload `kind` is the top-level owner of a pod (Deployment, StatefulSet, DaemonSet, CronJob,
-Job). A pod without an owner is a workload of kind `pod`.
+Job), lowercased. A pod without an owner is a workload of kind `pod`. Other controllers (an Argo
+Rollout, an operator's custom resource) keep their own kind, e.g. `rollout`.
 
 ### 5.2 Edges
 
-Edges point in the direction data flows. Kind names describe the relation, not grammar.
+Edges point in the direction data flows. The kind names the role of the endpoint that is not
+a topic: a `consumer` edge leads to the group that consumes, a `producer` edge comes from the
+workload that produces.
 
 | Kind | From → To | Discovered from |
 |---|---|---|
-| `subscription` | topic → group | Kafka: member assignments and committed offsets of the group |
+| `consumer` | topic → group | Kafka: member assignments and committed offsets of the group |
 | `membership` | group → workload / endpoint | Kafka: group members (`client.host`) |
-| `production` | workload → topic | Inferred: topic name found in the workload's configuration, and the workload does not consume that topic |
+| `producer` | workload → topic | Inferred: topic name found in the workload's configuration, and the workload does not consume that topic |
 | `connection` | workload / endpoint → database | Postgres: `pg_stat_activity.client_addr` |
 
 Each edge carries:
@@ -160,15 +163,19 @@ the timestamp of the latest record.
 
 Identity source and configuration source.
 
-- Maps pod IPs to workloads (pod → ReplicaSet → Deployment, etc.). Pods with
-  `hostNetwork: true` are skipped for IP mapping because their IP is not unique.
-- Assigns an environment to each workload: `namespace` (default) or `label:<key>`.
-- Collects configuration values per workload: container env vars (literal and
-  `configMapKeyRef`), `envFrom` ConfigMaps, and ConfigMaps mounted as volumes.
+- Workloads are found from their pods: the owner is followed from the pod through a ReplicaSet
+  or Job to its controller (Deployment, CronJob). A workload without non-finished pods (e.g.
+  scaled to 0) is not discovered. Finished pods (`Succeeded`, `Failed`) are skipped.
+- Maps the IPs of running pods to workloads. Pods with `hostNetwork: true` are skipped for IP
+  mapping because their IP is not unique.
+- Assigns an environment to each workload: `namespace` (default) or `label:<key>`. With a label,
+  the newest pod of the workload decides (during a rollout old pods may still carry the old
+  value). A workload without the label has no environment.
+- Collects configuration values per workload from its newest pod: container env vars (literal
+  and `configMapKeyRef`), `envFrom` ConfigMaps, and ConfigMaps mounted as volumes.
   **Secrets are not read.**
 - Auth: kubeconfig (path and context). In-cluster auth comes with service mode.
-- Required RBAC: `get`/`list` on pods, replicasets, deployments, statefulsets, daemonsets,
-  jobs, cronjobs and configmaps in the selected namespaces.
+- Required RBAC: `list` on pods, replicasets, jobs and configmaps in the selected namespaces.
 
 ### 6.3 Postgres
 
@@ -196,13 +203,14 @@ For each `endpoint` node: look up identities by address.
 ### 7.2 Configuration references to topics
 
 For each workload's configuration values, tokenize the text (separators: whitespace,
-`,;:="'`) and compare tokens with known topic names:
+`,;:="'[]{}()`; brackets split so a YAML flow list `[a, b]` gives clean names) and compare
+tokens with known topic names:
 
 - **Exact match**, and the workload is a member of a group subscribed to that topic: no new
   edge (consumption is already observed).
-- **Exact match**, and the workload does not consume the topic: `production` edge, `inferred`.
-- **Near match** (edit distance 1–2 to an existing topic, no exact match): rule
-  `near-miss-topic` with a "did you mean" hint.
+- **Exact match**, and the workload does not consume the topic: `producer` edge, `inferred`.
+  A name that exists in several Kafka sources gives an edge to each.
+- **Near match**: rule `near-miss-topic` with a "did you mean" hint (§9.1).
 
 Limitation: a workload that both consumes and produces the same topic is only seen as a
 consumer.
@@ -228,10 +236,17 @@ chains:
 ```
 
 A selector matches nodes by kind and name, optionally restricted by `source`. Workload
-selectors match only within the selected environment.
+selectors match only within the selected environment. Without `--env` there is no environment
+boundary: every workload is selected and expanded.
 
-Without configured chains, everything connected to the selected environment's workloads is
-one implicit chain named `all`.
+An entry that matches no node gives the error finding `chain-entry-not-found` on its chain: a
+chain that cannot be found cannot be green. It is reported only when every source answered;
+otherwise the node may be in the missing source and the chain is `unknown` anyway.
+
+Without configured chains, everything connected to the selected environment's workloads (along
+and against the edges, so the topics they consume are included) is one implicit chain named
+`all`. Without any workloads (no Kubernetes source) `all` is the whole graph. An `--env` that no
+workload has gives `chain-entry-not-found` on `all`.
 
 ### 8.2 Extraction
 
@@ -244,9 +259,10 @@ Breadth-first walk along edge direction from the entry nodes:
 - Databases are terminal.
 - Cycles are handled with a visited set.
 
-A workload in the chain with no outgoing edges is marked as a **gap** (status `unknown`,
-"continuation not discovered"). It is reported as information, because it may be a legitimate
-end of the chain or a missing production edge (§6.1 known gap).
+A workload of the selected environment in the chain with no outgoing edges is marked as a
+**gap** (`gap: true` on the node, "nothing discovered downstream"). It is information only and
+does not change any status: it may be a legitimate end of the chain or a missing producer edge
+(§6.1 known gap), and most chains end at a workload.
 
 ### 8.3 What "green" means
 
@@ -268,7 +284,7 @@ Rules work without a lockfile, from the first run.
 | `stalled-consumer` | error | A group has lag > 0 and no active members. |
 | `lagging-consumer` | warning | Group lag on a topic exceeds a threshold (default 1000). |
 | `empty-subscription` | warning | A group is subscribed to a topic that has never received a record (typical for an auto-created topic with a typo). |
-| `near-miss-topic` | warning | A workload's config references a name that is 1–2 edits away from an existing topic. |
+| `near-miss-topic` | warning | A workload's config references a name that is 1–2 edits away from a topic that receives records, and the name itself is not a topic in use. |
 | `unconsumed-topic` | warning | A topic in a chain receives records but has no subscription. |
 
 Severity of each rule can be overridden or turned off in the config. Idle topics (no traffic)
@@ -285,8 +301,12 @@ Details:
 - `unresolved-client` runs only when at least one Kubernetes source is configured and every
   Kubernetes source answered. Without identities every endpoint is unresolved, and reporting
   each of them would only repeat that.
+- `near-miss-topic`: "not a topic in use" means no topic has that name, or it has never received
+  a record. The second case matters: a consumer with a typo auto-creates the mistyped topic, so
+  the name exists. Only topics with records are suggested, at most one edit away for names
+  shorter than 10 characters, two for longer ones. Names shorter than 5 characters and topics
+  starting with `_` are not suggested: they are a few edits away from too many ordinary words.
 - An unknown rule name in the config, or a `threshold` on a rule without one, is a config error.
-  Rules that are specified but not implemented yet are accepted.
 
 ### 9.2 Drift (requires a lockfile)
 
@@ -306,9 +326,13 @@ edit distance 2, the finding says "possibly renamed or mistyped: `orders.created
 
 - Severity order: `error` > `warning` > `unknown` > `ok`.
 - Node and edge status is the worst finding on it. Items of an unavailable source are `unknown`.
-- Chain status is the worst status of its nodes and edges. While any source is unavailable,
-  every chain is at least `unknown`: part of the graph is not visible.
+- Chain status is the worst status of its nodes, its edges and the findings about the chain
+  itself (`chain-entry-not-found`). While any source is unavailable, every chain is at least
+  `unknown`: part of the graph is not visible.
 - Report status is the worst chain status.
+- Only findings with a subject in a checked chain, or about a chain, are reported. Problems
+  elsewhere in shared infrastructure (a stalled group of another environment) must not fail the
+  check of this one.
 
 ## 10. Lockfile
 
@@ -324,10 +348,10 @@ environment: stand-a
 chains:
   order-flow:
     edges:
-      - {from: workload:test/stand-a/deployment/billing, kind: production, to: topic:main/invoices.created}
+      - {from: workload:test/stand-a/deployment/billing, kind: producer, to: topic:main/invoices.created}
       - {from: workload:test/stand-a/deployment/billing, kind: connection, to: database:orders-db/orders}
       - {from: group:main/billing, kind: membership, to: workload:test/stand-a/deployment/billing}
-      - {from: topic:main/orders.created, kind: subscription, to: group:main/billing}
+      - {from: topic:main/orders.created, kind: consumer, to: group:main/billing}
 ```
 
 Replica counts are not locked: autoscaling would make the lockfile change all the time.
@@ -429,7 +453,7 @@ the TUI and the future web UI.
  config ──► sources (parallel, per-source timeout, read-only)
               │  Snapshot per source
               ▼
-           resolve        endpoints → workloads, config refs → production edges
+           resolve        endpoints → workloads, config refs → producer edges
               ▼
             graph
               ▼
@@ -509,7 +533,7 @@ Service mode is not built in the MVP, but the design must not block it:
 
 ## 15. Roadmap (after MVP)
 
-- **Sources:** distributed tracing (OTel/Tempo/Jaeger) for observed production edges; Spring Boot
+- **Sources:** distributed tracing (OTel/Tempo/Jaeger) for observed producer edges; Spring Boot
   Actuator; Docker / Compose identity; static identity mapping for VMs; Kafka Connect; more
   databases (MySQL, MongoDB); RabbitMQ.
 - **External source plugins:** an executable `xdq-source-<type>` receives its config as JSON on

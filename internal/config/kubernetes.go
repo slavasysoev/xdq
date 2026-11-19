@@ -22,19 +22,25 @@ func (*KubernetesConfig) Type() string {
 	return TypeKubernetes
 }
 
+// EnvironmentLabel returns the label key when the environment is derived from a label.
+func (kubernetes *KubernetesConfig) EnvironmentLabel() (string, bool) {
+	return strings.CutPrefix(kubernetes.Environment, "label:")
+}
+
 func (kubernetes *KubernetesConfig) validate(validation *validation, path string) {
 	environment := kubernetes.Environment
-	labelKey, isLabel := strings.CutPrefix(environment, "label:")
+	labelKey, isLabel := kubernetes.EnvironmentLabel()
 	valid := environment == "" || environment == EnvironmentNamespace || (isLabel && labelKey != "")
 	if !valid {
 		validation.fail(path+".environment", "must be %q or \"label:<key>\"", EnvironmentNamespace)
 	}
 }
 
-func (kubernetes *KubernetesConfig) resolve(_, _ string) error {
+func (kubernetes *KubernetesConfig) resolve(baseDir, _ string) error {
 	if kubernetes.Environment == "" {
 		kubernetes.Environment = EnvironmentNamespace
 	}
+	kubernetes.Kubeconfig = resolvePath(baseDir, kubernetes.Kubeconfig)
 
 	return nil
 }

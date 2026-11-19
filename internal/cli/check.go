@@ -5,7 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"os"
+	"slices"
+	"strings"
 	"time"
 
 	"github.com/charmbracelet/colorprofile"
@@ -18,9 +21,11 @@ import (
 )
 
 type checkOptions struct {
-	configPath string
-	output     string
-	timeout    time.Duration
+	configPath  string
+	environment string
+	chains      []string
+	output      string
+	timeout     time.Duration
 }
 
 func newCheckCommand() *cobra.Command {
@@ -38,6 +43,8 @@ func newCheckCommand() *cobra.Command {
 	}
 	flags := command.Flags()
 	flags.StringVar(&options.configPath, "config", "xdq.yaml", "path to the config file")
+	flags.StringVar(&options.environment, "env", "", "environment to check; empty means every environment")
+	flags.StringArrayVar(&options.chains, "chain", nil, "chain to check, repeatable; default all configured chains")
 	flags.StringVarP(&options.output, "output", "o", outputText, "output format: text or json")
 	flags.DurationVar(&options.timeout, "timeout", 10*time.Second, "timeout of each source")
 
@@ -61,6 +68,10 @@ func runCheck(ctx context.Context, stdout io.Writer, options checkOptions) (err 
 	if err != nil {
 		return fmt.Errorf("config %s:\n%w", options.configPath, err)
 	}
+	chains, err := selectChains(configuration.Chains, options.chains)
+	if err != nil {
+		return err
+	}
 	sources, err := openSources(configuration)
 	if err != nil {
 		return err
@@ -69,7 +80,7 @@ func runCheck(ctx context.Context, stdout io.Writer, options checkOptions) (err 
 		err = errors.Join(err, closeSources(sources))
 	}()
 
-	result := engine.New(sources, rules, options.timeout).Run(ctx, "")
+	result := engine.New(sources, rules, chains, options.timeout).Run(ctx, options.environment)
 
 	if options.output == outputJSON {
 		err = writeJSON(stdout, &result)
@@ -85,6 +96,23 @@ func runCheck(ctx context.Context, stdout io.Writer, options checkOptions) (err 
 	}
 
 	return nil
+}
+
+// selectChains returns the configured chains named by --chain, or all of them when none is named.
+func selectChains(configured map[string]config.ChainConfig, names []string) (map[string]config.ChainConfig, error) {
+	if len(names) == 0 {
+		return configured, nil
+	}
+	selected := make(map[string]config.ChainConfig, len(names))
+	for _, name := range names {
+		chain, found := configured[name]
+		if !found {
+			return nil, fmt.Errorf("invalid --chain %q: configured chains: %s", name, strings.Join(slices.Sorted(maps.Keys(configured)), ", "))
+		}
+		selected[name] = chain
+	}
+
+	return selected, nil
 }
 
 // checkExitCode returns the exit code of a finished check. An incomplete run wins over error

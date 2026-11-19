@@ -28,8 +28,7 @@ func (exitError *ExitError) Error() string {
 
 // ExitCode returns the process exit code for an error returned by the command tree.
 func ExitCode(err error) int {
-	var exitError *ExitError
-	if errors.As(err, &exitError) {
+	if exitError, ok := errors.AsType[*ExitError](err); ok {
 		return exitError.Code
 	}
 
@@ -38,8 +37,7 @@ func ExitCode(err error) int {
 
 // HandleError prints errors in the fang style, except ExitError, which carries only a code.
 func HandleError(writer io.Writer, styles fang.Styles, err error) {
-	var exitError *ExitError
-	if errors.As(err, &exitError) {
+	if _, ok := errors.AsType[*ExitError](err); ok {
 		return
 	}
 	fang.DefaultErrorHandler(writer, styles, err)

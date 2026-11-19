@@ -43,6 +43,9 @@ type ChainNode struct {
 	graph.Node
 
 	Status Status `json:"status"`
+	// Gap marks a workload where the walk stopped: nothing was discovered downstream. It is
+	// information and does not change the status, because most chains end at a workload.
+	Gap bool `json:"gap,omitempty"`
 }
 
 // ChainEdge is an edge with its status.
@@ -54,15 +57,19 @@ type ChainEdge struct {
 
 // Finding is a violated rule or a drift from the lockfile.
 type Finding struct {
-	Rule     string           `json:"rule"`
-	Severity Severity         `json:"severity"`
-	Subjects []graph.NodeID   `json:"subjects"`
+	Rule     string         `json:"rule"`
+	Severity Severity       `json:"severity"`
+	Subjects []graph.NodeID `json:"subjects"`
+	// Chain is set when the finding is about a chain itself rather than its nodes, e.g. an entry
+	// that matched no node. The finding then sets the status of that chain.
+	Chain    string           `json:"chain,omitempty"`
 	Message  string           `json:"message"`
 	Evidence []graph.Evidence `json:"evidence,omitempty"`
 }
 
-// NewChain makes a chain of all nodes and edges of the snapshot, every status ok.
-func NewChain(name string, snapshot graph.Snapshot) Chain {
+// NewChain makes a chain of the nodes and edges of the subgraph, every status ok.
+func NewChain(name string, subgraph graph.Subgraph) Chain {
+	snapshot := subgraph.Snapshot
 	chain := Chain{
 		Name:         name,
 		Status:       StatusOK,
@@ -71,7 +78,7 @@ func NewChain(name string, snapshot graph.Snapshot) Chain {
 		Observations: snapshot.Observations,
 	}
 	for _, node := range snapshot.Nodes {
-		chain.Nodes = append(chain.Nodes, ChainNode{Node: node, Status: StatusOK})
+		chain.Nodes = append(chain.Nodes, ChainNode{Node: node, Status: StatusOK, Gap: slices.Contains(subgraph.Gaps, node.ID)})
 	}
 	for _, edge := range snapshot.Edges {
 		chain.Edges = append(chain.Edges, ChainEdge{Edge: edge, Status: StatusOK})
@@ -110,16 +117,20 @@ func (report *Report) assignStatuses() {
 		}
 	}
 	findingStatus := make(map[graph.NodeID]Status)
+	chainFindingStatus := make(map[string]Status)
 	for _, finding := range report.Findings {
 		for _, subject := range finding.Subjects {
 			findingStatus[subject] = Worst(findingStatus[subject], finding.Severity.Status())
+		}
+		if finding.Chain != "" {
+			chainFindingStatus[finding.Chain] = Worst(chainFindingStatus[finding.Chain], finding.Severity.Status())
 		}
 	}
 
 	var chainStatuses []Status
 	for chainIndex := range report.Chains {
 		chain := &report.Chains[chainIndex]
-		var statuses []Status
+		statuses := []Status{chainFindingStatus[chain.Name]}
 		if len(unavailable) > 0 {
 			statuses = append(statuses, StatusUnknown)
 		}

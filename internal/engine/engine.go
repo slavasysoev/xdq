@@ -4,29 +4,31 @@ package engine
 
 import (
 	"context"
+	"slices"
 	"sync"
 	"time"
 
+	"github.com/slavasysoev/xdq/internal/config"
 	"github.com/slavasysoev/xdq/internal/graph"
 	"github.com/slavasysoev/xdq/internal/report"
+	"github.com/slavasysoev/xdq/internal/resolve"
 	"github.com/slavasysoev/xdq/internal/rule"
 	"github.com/slavasysoev/xdq/internal/source"
 )
-
-// chainAll is the implicit chain of the whole graph. It stands in until chain extraction (§8).
-const chainAll = "all"
 
 // Engine has no global state and can run many times, reusing the open sources.
 // It does not own the sources: the caller opens and closes them.
 type Engine struct {
 	sources []source.Source
 	rules   *rule.Set
+	chains  map[string]config.ChainConfig
 	timeout time.Duration
 }
 
-// New creates an engine. Timeout limits each source's Discover separately.
-func New(sources []source.Source, rules *rule.Set, timeout time.Duration) *Engine {
-	return &Engine{sources: sources, rules: rules, timeout: timeout}
+// New creates an engine. Chains are the chains to check; none means the implicit chain.
+// Timeout limits each source's Discover separately.
+func New(sources []source.Source, rules *rule.Set, chains map[string]config.ChainConfig, timeout time.Duration) *Engine {
+	return &Engine{sources: sources, rules: rules, chains: chains, timeout: timeout}
 }
 
 // discovery is the outcome of discovering one source.
@@ -54,9 +56,11 @@ func (engine *Engine) Run(ctx context.Context, environment string) report.Report
 		results[index] = discovered.result
 		snapshots[index] = discovered.snapshot
 	}
-	merged := graph.Merge(snapshots...)
+	merged := resolve.Resolve(graph.Merge(snapshots...))
 	findings := engine.rules.Check(rule.Input{Graph: merged, Sources: results, Now: time.Now()})
-	chains := []report.Chain{report.NewChain(chainAll, merged)}
+	complete := !slices.ContainsFunc(results, func(result report.SourceResult) bool { return result.Status != report.StatusOK })
+	chains, chainFindings := extractChains(engine.chains, merged, environment, complete)
+	findings = append(findingsInChains(findings, chains), chainFindings...)
 
 	return report.New(environment, results, chains, findings)
 }

@@ -53,7 +53,10 @@ func writeText(writer io.Writer, result *report.Report) error {
 	})
 	for _, chain := range result.Chains {
 		text.WriteString("\n")
-		fmt.Fprintf(&text, "%s  %s\n\n", chain.Name, styleStatus(chain.Status, strings.ToUpper(string(chain.Status))))
+		_, err := fmt.Fprintf(&text, "%s  %s\n\n", chain.Name, styleStatus(chain.Status, strings.ToUpper(string(chain.Status))))
+		if err != nil {
+			return err
+		}
 		chainFindings := findingsInChain(chain, findings)
 		if len(chainFindings) == 0 {
 			text.WriteString("  no findings\n")
@@ -64,6 +67,7 @@ func writeText(writer io.Writer, result *report.Report) error {
 			}
 			writeFinding(&text, finding)
 		}
+		writeGaps(&text, chain)
 	}
 
 	_, err := io.WriteString(writer, text.String())
@@ -94,7 +98,11 @@ func writeFinding(text *strings.Builder, finding report.Finding) {
 	for index, subject := range finding.Subjects {
 		subjects[index] = string(subject)
 	}
-	fmt.Fprintf(text, "  %s  %s  %s\n", severity, finding.Rule, strings.Join(subjects, ", "))
+	header := "  " + severity + "  " + finding.Rule
+	if len(subjects) > 0 {
+		header += "  " + strings.Join(subjects, ", ")
+	}
+	text.WriteString(header + "\n")
 	for line := range strings.Lines(finding.Message) {
 		text.WriteString(findingIndent + strings.TrimSuffix(line, "\n") + "\n")
 	}
@@ -103,7 +111,28 @@ func writeFinding(text *strings.Builder, finding report.Finding) {
 	}
 }
 
-// findingsInChain returns the findings with at least one subject in the chain.
+// writeGaps lists the workloads where the chain stops. They are information, not findings.
+func writeGaps(text *strings.Builder, chain report.Chain) {
+	var gaps []string
+	for _, node := range chain.Nodes {
+		if node.Gap {
+			gaps = append(gaps, string(node.ID))
+		}
+	}
+	if len(gaps) == 0 {
+		return
+	}
+	text.WriteString("\n")
+	for _, gap := range gaps {
+		_, err := fmt.Fprintf(text, "  %-*s  %s\n", statusWidth, "gap", gap)
+		if err != nil {
+			return
+		}
+		text.WriteString(findingIndent + "nothing discovered downstream: the end of the chain or an undiscovered producer\n")
+	}
+}
+
+// findingsInChain returns the findings about the chain itself or with a subject in it.
 func findingsInChain(chain report.Chain, findings []report.Finding) []report.Finding {
 	inChain := make(map[graph.NodeID]bool, len(chain.Nodes))
 	for _, node := range chain.Nodes {
@@ -111,7 +140,7 @@ func findingsInChain(chain report.Chain, findings []report.Finding) []report.Fin
 	}
 	var result []report.Finding
 	for _, finding := range findings {
-		if slices.ContainsFunc(finding.Subjects, func(subject graph.NodeID) bool { return inChain[subject] }) {
+		if finding.Chain == chain.Name || slices.ContainsFunc(finding.Subjects, func(subject graph.NodeID) bool { return inChain[subject] }) {
 			result = append(result, finding)
 		}
 	}

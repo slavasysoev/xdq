@@ -1,0 +1,9 @@
+main  kafka  ok        120ms
+
+order-flow  ERROR
+
+  ERROR    chain-entry-not-found
+           entry topic orders.created matched no node
+
+  gap      workload:test/stand-a/deployment/billing
+           nothing discovered downstream: the end of the chain or an undiscovered producer

@@ -43,6 +43,6 @@ func (snapshot *Snapshot) Sort() {
 		return cmp.Or(cmp.Compare(left.Address, right.Address), cmp.Compare(left.Workload, right.Workload))
 	})
 	slices.SortFunc(snapshot.ConfigValues, func(left, right ConfigValue) int {
-		return cmp.Or(cmp.Compare(left.Workload, right.Workload), cmp.Compare(left.Origin, right.Origin))
+		return cmp.Or(cmp.Compare(left.Workload, right.Workload), cmp.Compare(left.Origin, right.Origin), cmp.Compare(left.Value, right.Value))
 	})
 }

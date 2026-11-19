@@ -29,7 +29,7 @@ func healthyReport() *report.Report {
 	})
 	result := report.New("",
 		[]report.SourceResult{{Name: "main", Type: "kafka", Status: report.StatusOK, DurationMs: 120}},
-		[]report.Chain{report.NewChain("all", snapshot)},
+		[]report.Chain{report.NewChain("all", graph.Subgraph{Snapshot: snapshot})},
 		nil)
 	return &result
 }
@@ -61,10 +61,33 @@ func failingReport() *report.Report {
 	return &result
 }
 
+// gapReport has a chain that ends at a workload and an entry that matched nothing.
+func gapReport() *report.Report {
+	billing := graph.NewWorkload("test", "stand-a", graph.WorkloadDeployment, "billing")
+	billing.Environment = "stand-a"
+	snapshot := graph.Merge(graph.Snapshot{
+		Nodes: []graph.Node{graph.NewGroup("main", "billing"), billing},
+		Edges: []graph.Edge{{From: graph.GroupID("main", "billing"), To: billing.ID, Kind: graph.EdgeMembership}},
+	})
+	chain := report.NewChain("order-flow", graph.Subgraph{Snapshot: snapshot, Gaps: []graph.NodeID{billing.ID}})
+	result := report.New("stand-a",
+		[]report.SourceResult{{Name: "main", Type: "kafka", Status: report.StatusOK, DurationMs: 120}},
+		[]report.Chain{chain},
+		[]report.Finding{{
+			Rule:     "chain-entry-not-found",
+			Severity: report.SeverityError,
+			Chain:    "order-flow",
+			Message:  "entry topic orders.created matched no node",
+		}})
+
+	return &result
+}
+
 func TestWriteText(t *testing.T) {
 	tests := map[string]*report.Report{
 		"healthy": healthyReport(),
 		"failing": failingReport(),
+		"gap":     gapReport(),
 	}
 	for name, result := range tests {
 		t.Run(name, func(t *testing.T) {
