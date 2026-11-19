@@ -1,0 +1,12 @@
+main       kafka     ok        120ms
+orders-db  postgres  unknown   10.0s  context deadline exceeded
+
+all  ERROR
+
+  ERROR    stalled-consumer  group:main/billing
+           lag 4 and no active members
+           last state: Empty
+           main: committed offsets on partitions 0,1
+
+  WARNING  empty-subscription  group:main/billing, topic:main/orders.created
+           subscribed to a topic that has never received a record

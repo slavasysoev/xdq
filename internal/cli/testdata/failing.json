@@ -1,0 +1,82 @@
+{
+  "schemaVersion": 1,
+  "status": "error",
+  "sources": [
+    {
+      "name": "main",
+      "type": "kafka",
+      "status": "ok",
+      "durationMs": 120
+    },
+    {
+      "name": "orders-db",
+      "type": "postgres",
+      "status": "unknown",
+      "durationMs": 10000,
+      "error": "context deadline exceeded"
+    }
+  ],
+  "chains": [
+    {
+      "name": "all",
+      "status": "error",
+      "nodes": [
+        {
+          "id": "group:main/billing",
+          "kind": "group",
+          "source": "main",
+          "name": "billing",
+          "status": "error"
+        },
+        {
+          "id": "topic:main/orders.created",
+          "kind": "topic",
+          "source": "main",
+          "name": "orders.created",
+          "status": "warning"
+        }
+      ],
+      "edges": [
+        {
+          "from": "topic:main/orders.created",
+          "to": "group:main/billing",
+          "kind": "subscription",
+          "confidence": "observed",
+          "evidence": [
+            {
+              "source": "main",
+              "detail": "assigned partitions 0,1,2"
+            }
+          ],
+          "status": "ok"
+        }
+      ],
+      "observations": {}
+    }
+  ],
+  "findings": [
+    {
+      "rule": "empty-subscription",
+      "severity": "warning",
+      "subjects": [
+        "group:main/billing",
+        "topic:main/orders.created"
+      ],
+      "message": "subscribed to a topic that has never received a record"
+    },
+    {
+      "rule": "stalled-consumer",
+      "severity": "error",
+      "subjects": [
+        "group:main/billing"
+      ],
+      "message": "lag 4 and no active members\nlast state: Empty",
+      "evidence": [
+        {
+          "source": "main",
+          "detail": "committed offsets on partitions 0,1"
+        }
+      ]
+    }
+  ]
+}
