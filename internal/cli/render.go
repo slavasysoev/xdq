@@ -48,7 +48,15 @@ func writeText(writer io.Writer, result *report.Report) error {
 		if err != nil {
 			return err
 		}
-		chainFindings := report.FindingsInChain(chain, findings)
+		var chainFindings []report.Finding
+		ignored := 0
+		for _, finding := range report.FindingsInChain(chain, findings) {
+			if finding.Ignored {
+				ignored++
+			} else {
+				chainFindings = append(chainFindings, finding)
+			}
+		}
 		if len(chainFindings) == 0 {
 			text.WriteString("  no findings\n")
 		}
@@ -57,6 +65,12 @@ func writeText(writer io.Writer, result *report.Report) error {
 				text.WriteString("\n")
 			}
 			writeFinding(&text, finding)
+		}
+		if ignored > 0 {
+			_, err = fmt.Fprintf(&text, "\n  %d ignored by rule exceptions; see --output json\n", ignored)
+			if err != nil {
+				return err
+			}
 		}
 		writeGaps(&text, chain)
 	}

@@ -49,6 +49,11 @@ func TestIsCompleteAndHasErrors(t *testing.T) {
 			wantComplete: true,
 			wantErrors:   true,
 		},
+		{
+			name:         "ignored error finding",
+			report:       Report{Sources: []SourceResult{available}, Findings: []Finding{{Severity: SeverityError, Ignored: true}}},
+			wantComplete: true,
+		},
 		{name: "unavailable source", report: Report{Sources: []SourceResult{available, unavailable}}},
 	}
 	for _, test := range tests {
@@ -91,6 +96,17 @@ func TestNew(t *testing.T) {
 		}
 		if chain.Status != StatusError || report.Status != StatusError {
 			t.Errorf("chain = %s, report = %s, want error", chain.Status, report.Status)
+		}
+	})
+
+	t.Run("ignored finding counts in no status", func(t *testing.T) {
+		report := New("",
+			[]SourceResult{{Name: "main", Status: StatusOK}, {Name: "db", Status: StatusOK}},
+			[]Chain{NewChain("all", graph.Subgraph{Snapshot: snapshot})},
+			[]Finding{{Severity: SeverityError, Subjects: []graph.NodeID{group.ID}, Ignored: true}})
+
+		if report.Chains[0].Nodes[1].Status != StatusOK || report.Status != StatusOK {
+			t.Errorf("group = %s, report = %s, want ok", report.Chains[0].Nodes[1].Status, report.Status)
 		}
 	})
 

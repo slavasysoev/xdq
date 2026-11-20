@@ -24,6 +24,7 @@ func Merge(snapshots ...Snapshot) Snapshot {
 		merged.ConfigValues = append(merged.ConfigValues, snapshot.ConfigValues...)
 		maps.Copy(merged.Observations.Topics, snapshot.Observations.Topics)
 		maps.Copy(merged.Observations.Groups, snapshot.Observations.Groups)
+		maps.Copy(merged.Observations.Workloads, snapshot.Observations.Workloads)
 	}
 
 	merged.Sort()

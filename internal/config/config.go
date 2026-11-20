@@ -1,6 +1,8 @@
 // Package config loads and validates xdq.yaml. The config says where to look, never what is there.
 package config
 
+import "time"
+
 // Config is the parsed and validated xdq.yaml.
 type Config struct {
 	Version int                     `yaml:"version"`
@@ -112,6 +114,21 @@ type RuleConfig struct {
 	Severity string `yaml:"severity"`
 	// Threshold is used by rules that compare against a number. Nil means the rule's default.
 	Threshold *int `yaml:"threshold"`
+	// Window is used by rules about recent activity, e.g. 30m. Zero means the rule's default.
+	Window time.Duration `yaml:"window"`
+	// Suffixes replaces the dead-letter suffixes of the rules that know them. Empty means the default.
+	Suffixes []string `yaml:"suffixes"`
+	// Ignore lists selectors of expected findings: a finding is ignored when any subject matches.
+	Ignore []IgnoreConfig `yaml:"ignore"`
+}
+
+// IgnoreConfig is a selector of a rule exception: the selectors of chains, plus Endpoint.
+// Exactly one of Topic, Group, Workload, Database, Endpoint is set.
+type IgnoreConfig struct {
+	// The embedded struct's fields are read from the same YAML mapping (like @JsonUnwrapped).
+	SelectorConfig `yaml:",inline"`
+	// Endpoint is an IP address or a CIDR range such as 10.20.0.0/16.
+	Endpoint string `yaml:"endpoint"`
 }
 
 // Rule severities that can be set in the config. They are plain strings, not report.Severity:

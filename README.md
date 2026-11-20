@@ -174,6 +174,10 @@ rules:
   A literal value is rejected. Secrets never appear in errors, reports or the lockfile.
 - **Rules** can be set to a different severity or turned off. Drift severities cannot be
   changed: the lockfile is the expected state.
+- **Exceptions**: `rules.<rule>.ignore` lists selectors (`topic`, `group`, `workload`,
+  `database`, or `endpoint` with an address or a CIDR range) of expected findings. A finding is
+  ignored when any of its subjects matches. Ignored findings stay in the JSON report with
+  `ignored: true`, count in no status and do not fail `check` or stop `lock`.
 
 ## Sources
 
@@ -204,6 +208,9 @@ Rules work without a lockfile.
 | `stalled-consumer` | error | A group has lag and no active members. |
 | `lagging-consumer` | warning | Lag exceeds the threshold (default 1000). |
 | `empty-subscription` | warning | A group is subscribed to a topic that has never received a record. |
+| `lag-beyond-retention` | error | A group's committed offset is below the start offset of a partition: retention deleted records it had not read. |
+| `workload-not-ready` | error | A workload has pods, but none of them is ready. |
+| `dead-letter-records` | warning | A dead-letter topic (`.dlt`, `-dlq`, ...; `suffixes` replaces the list) received a record within `window` (default 1h). |
 | `near-miss-topic` | warning | A config references a name one or two edits away from a live topic. |
 | `unconsumed-topic` | warning | A topic in a chain receives records but has no subscription. |
 

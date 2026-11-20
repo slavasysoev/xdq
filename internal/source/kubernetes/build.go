@@ -1,6 +1,7 @@
 package kubernetes
 
 import (
+	"cmp"
 	"fmt"
 	"maps"
 	"slices"
@@ -43,16 +44,73 @@ func buildSnapshot(sourceName string, settings config.KubernetesConfig, cluster 
 		if !seen || isNewer(pod, current.newest) {
 			workloads[node.ID] = workload{node: node, newest: pod}
 		}
+		snapshot.Observations.Workloads[node.ID] = addPod(snapshot.Observations.Workloads[node.ID], pod)
 	}
 	for _, id := range slices.Sorted(maps.Keys(workloads)) {
 		found := workloads[id]
 		found.node.Environment = environment(settings, found.newest)
 		snapshot.Nodes = append(snapshot.Nodes, found.node)
 		snapshot.ConfigValues = append(snapshot.ConfigValues, configValues(id, found.newest, cluster.configMaps)...)
+		slices.SortFunc(snapshot.Observations.Workloads[id].NotReady, func(left, right graph.PodProblem) int {
+			return cmp.Compare(left.Pod, right.Pod)
+		})
 	}
 	snapshot.Sort()
 
 	return snapshot
+}
+
+// Reasons of a pod that is not ready, besides the waiting reason of a container.
+const (
+	reasonUnschedulable = "Unschedulable"
+	reasonNotReady      = "NotReady"
+)
+
+// addPod counts the pod in the observation of its workload. A pod that is not ready is listed
+// with its reason.
+func addPod(observation graph.WorkloadObservation, pod corev1.Pod) graph.WorkloadObservation {
+	observation.Pods++
+	if isReady(pod) {
+		observation.ReadyPods++
+
+		return observation
+	}
+	var restarts int32
+	for _, status := range pod.Status.ContainerStatuses {
+		restarts += status.RestartCount
+	}
+	observation.NotReady = append(observation.NotReady, graph.PodProblem{
+		Pod: pod.Name, Reason: notReadyReason(pod), Restarts: restarts,
+	})
+
+	return observation
+}
+
+func isReady(pod corev1.Pod) bool {
+	for _, condition := range pod.Status.Conditions {
+		if condition.Type == corev1.PodReady {
+			return condition.Status == corev1.ConditionTrue
+		}
+	}
+
+	return false
+}
+
+// notReadyReason returns the waiting reason of the first container that waits, Unschedulable
+// for a pod that is not scheduled, otherwise NotReady (a running pod failing its readiness probe).
+func notReadyReason(pod corev1.Pod) string {
+	for _, status := range slices.Concat(pod.Status.InitContainerStatuses, pod.Status.ContainerStatuses) {
+		if status.State.Waiting != nil && status.State.Waiting.Reason != "" {
+			return status.State.Waiting.Reason
+		}
+	}
+	for _, condition := range pod.Status.Conditions {
+		if condition.Type == corev1.PodScheduled && condition.Status == corev1.ConditionFalse {
+			return reasonUnschedulable
+		}
+	}
+
+	return reasonNotReady
 }
 
 // topOwner returns the kind and name of the object that ultimately runs the pod. A pod without

@@ -155,9 +155,11 @@ func renderTreeLine(line treeLine) string {
 
 // findingSummary counts the findings by severity, e.g. "2 errors, 1 warning".
 func findingSummary(findings []report.Finding) string {
-	errorCount, warningCount := 0, 0
+	errorCount, warningCount, ignoredCount := 0, 0, 0
 	for _, finding := range findings {
-		if finding.Severity == report.SeverityError {
+		if finding.Ignored {
+			ignoredCount++
+		} else if finding.Severity == report.SeverityError {
 			errorCount++
 		} else {
 			warningCount++
@@ -171,7 +173,10 @@ func findingSummary(findings []report.Finding) string {
 		parts = append(parts, plural(warningCount, "warning"))
 	}
 	if len(parts) == 0 {
-		return "no findings"
+		parts = append(parts, "no findings")
+	}
+	if ignoredCount > 0 {
+		parts = append(parts, fmt.Sprintf("%d ignored", ignoredCount))
 	}
 
 	return strings.Join(parts, ", ")

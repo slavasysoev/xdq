@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"net/netip"
 	"regexp"
 	"slices"
 )
@@ -35,7 +36,7 @@ func validate(config *Config) error {
 		result.chain(name, config.Chains[name], config.Sources)
 	}
 	for _, name := range slices.Sorted(maps.Keys(config.Rules)) {
-		result.rule(name, config.Rules[name])
+		result.rule(name, config.Rules[name], config.Sources)
 	}
 
 	return errors.Join(result.problems...)
@@ -100,10 +101,37 @@ func (validation *validation) selector(path string, selector SelectorConfig, sou
 	}
 }
 
-func (validation *validation) rule(name string, rule RuleConfig) {
+func (validation *validation) rule(name string, rule RuleConfig, sources map[string]SourceConfig) {
 	switch rule.Severity {
 	case "", SeverityError, SeverityWarning, SeverityOff:
 	default:
 		validation.fail("rules."+name+".severity", "must be %s, %s or %s", SeverityError, SeverityWarning, SeverityOff)
 	}
+	for index, ignore := range rule.Ignore {
+		validation.ignore(fmt.Sprintf("rules.%s.ignore[%d]", name, index), ignore, sources)
+	}
+}
+
+func (validation *validation) ignore(path string, ignore IgnoreConfig, sources map[string]SourceConfig) {
+	if ignore.Endpoint == "" {
+		validation.selector(path, ignore.SelectorConfig, sources)
+
+		return
+	}
+	if len(ignore.sourceTypes()) > 0 || ignore.Source != "" {
+		validation.fail(path, "exactly one of topic, group, workload, database, endpoint must be set, without source for endpoint")
+
+		return
+	}
+	if !IsAddressOrRange(ignore.Endpoint) {
+		validation.fail(path+".endpoint", "must be an IP address or a CIDR range")
+	}
+}
+
+// IsAddressOrRange tells whether text is an IP address or a CIDR range.
+func IsAddressOrRange(text string) bool {
+	_, addressErr := netip.ParseAddr(text)
+	_, rangeErr := netip.ParsePrefix(text)
+
+	return addressErr == nil || rangeErr == nil
 }

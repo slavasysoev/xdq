@@ -108,6 +108,36 @@ func TestDiscoverWorkloads(t *testing.T) {
 	})
 }
 
+func TestDiscoverWorkloadReadiness(t *testing.T) {
+	owner := controlledBy("StatefulSet", "billing")
+	ready := pod("stand-a", "billing-0", "10.0.0.1", 0, owner)
+	ready.Status.Conditions = []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionTrue}}
+	crashing := pod("stand-a", "billing-1", "10.0.0.2", 0, owner)
+	crashing.Status.ContainerStatuses = []corev1.ContainerStatus{
+		{RestartCount: 4, State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: "CrashLoopBackOff"}}},
+		{RestartCount: 1},
+	}
+	unscheduled := pod("stand-a", "billing-2", "10.0.0.3", 0, owner)
+	unscheduled.Status.Conditions = []corev1.PodCondition{{Type: corev1.PodScheduled, Status: corev1.ConditionFalse}}
+	probeFailing := pod("stand-a", "debug", "10.0.0.4", 0, nil)
+	probeFailing.Status.Conditions = []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionFalse}}
+
+	snapshot := discover(t, config.KubernetesConfig{}, unscheduled, crashing, ready, probeFailing)
+
+	billing := graph.WorkloadID(sourceName, "stand-a", graph.WorkloadStatefulSet, "billing")
+	debug := graph.WorkloadID(sourceName, "stand-a", graph.WorkloadPod, "debug")
+	want := map[graph.NodeID]graph.WorkloadObservation{
+		billing: {Pods: 3, ReadyPods: 1, NotReady: []graph.PodProblem{
+			{Pod: "billing-1", Reason: "CrashLoopBackOff", Restarts: 5},
+			{Pod: "billing-2", Reason: "Unschedulable"},
+		}},
+		debug: {Pods: 1, NotReady: []graph.PodProblem{{Pod: "debug", Reason: "NotReady"}}},
+	}
+	if !reflect.DeepEqual(snapshot.Observations.Workloads, want) {
+		t.Errorf("workloads = %+v, want %+v", snapshot.Observations.Workloads, want)
+	}
+}
+
 func TestDiscoverEnvironmentFromNewestPodLabel(t *testing.T) {
 	settings := config.KubernetesConfig{Environment: "label:stand"}
 	old := pod("apps", "billing-a", "10.0.0.1", 0, controlledBy("StatefulSet", "billing"))

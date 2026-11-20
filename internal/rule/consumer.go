@@ -83,7 +83,7 @@ func checkEmptySubscription(input Input, settings settings) []report.Finding {
 			continue
 		}
 		observation, observed := input.Graph.Observations.Topics[edge.From]
-		if !observed || !neverReceived(observation) {
+		if !observed || !neverReceived(observation) || isDeadLetter(nodes[edge.From].Name, settings.suffixes) {
 			continue
 		}
 		message := fmt.Sprintf("consumes %s, which has never received a record", nodes[edge.From].Name)
@@ -108,7 +108,7 @@ func checkUnconsumedTopic(input Input, settings settings) []report.Finding {
 	for _, topic := range slices.Sorted(maps.Keys(topics)) {
 		latest := topics[topic].LatestRecord
 		if consumed[topic] || latest == nil || input.Now.Sub(*latest) > recentActivity ||
-			strings.HasPrefix(nodes[topic].Name, internalTopicPrefix) {
+			strings.HasPrefix(nodes[topic].Name, internalTopicPrefix) || isDeadLetter(nodes[topic].Name, settings.suffixes) {
 			continue
 		}
 		message := fmt.Sprintf("received a record at %s, but no group consumes it", latest.Format(time.RFC3339))

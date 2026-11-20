@@ -83,11 +83,21 @@ func gapReport() *report.Report {
 	return &result
 }
 
+// ignoredReport has one finding that an exception of the config ignores, and one that is not.
+func ignoredReport() *report.Report {
+	failing := failingReport()
+	failing.Findings[1].Ignored = true
+	result := report.New("", failing.Sources[:1], failing.Chains, failing.Findings)
+
+	return &result
+}
+
 func TestWriteText(t *testing.T) {
 	tests := map[string]*report.Report{
 		"healthy": healthyReport(),
 		"failing": failingReport(),
 		"gap":     gapReport(),
+		"ignored": ignoredReport(),
 	}
 	for name, result := range tests {
 		t.Run(name, func(t *testing.T) {

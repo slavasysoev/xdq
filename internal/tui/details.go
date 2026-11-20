@@ -31,7 +31,11 @@ func findingLines(nodeID graph.NodeID, findings []report.Finding) []string {
 		if !slices.Contains(finding.Subjects, nodeID) {
 			continue
 		}
-		lines = append(lines, "  "+statusLabel(finding.Severity.Status())+"  "+finding.Rule)
+		header := "  " + statusLabel(finding.Severity.Status()) + "  " + finding.Rule
+		if finding.Ignored {
+			header += "  (ignored)"
+		}
+		lines = append(lines, header)
 		for line := range strings.Lines(finding.Message) {
 			lines = append(lines, "    "+strings.TrimSuffix(line, "\n"))
 		}

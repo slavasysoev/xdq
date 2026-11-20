@@ -15,6 +15,7 @@ func TestLockRefusal(t *testing.T) {
 	complete := []report.SourceResult{{Name: "main", Status: report.StatusOK}}
 	incomplete := []report.SourceResult{{Name: "main", Status: report.StatusUnknown}}
 	errorFindings := []report.Finding{{Rule: "stalled-consumer", Severity: report.SeverityError}}
+	ignoredFindings := []report.Finding{{Rule: "stalled-consumer", Severity: report.SeverityError, Ignored: true}}
 	warningFindings := []report.Finding{{Rule: "lagging-consumer", Severity: report.SeverityWarning}}
 	tests := []struct {
 		name     string
@@ -24,6 +25,7 @@ func TestLockRefusal(t *testing.T) {
 	}{
 		{name: "clean", result: report.New("", complete, nil, nil), wantCode: exitCodeOK},
 		{name: "warnings only", result: report.New("", complete, nil, warningFindings), wantCode: exitCodeOK},
+		{name: "ignored error finding", result: report.New("", complete, nil, ignoredFindings), wantCode: exitCodeOK},
 		{name: "error findings", result: report.New("", complete, nil, errorFindings), wantCode: exitCodeErrors},
 		{name: "error findings, forced", result: report.New("", complete, nil, errorFindings), force: true, wantCode: exitCodeOK},
 		{name: "incomplete, forced", result: report.New("", incomplete, nil, nil), force: true, wantCode: exitCodeIncomplete},

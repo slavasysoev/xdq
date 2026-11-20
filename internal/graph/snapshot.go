@@ -14,13 +14,34 @@ type Snapshot struct {
 
 // Observations are volatile measurements. They feed rules and the UI and are never locked.
 type Observations struct {
-	Topics map[NodeID]TopicObservation `json:"topics,omitempty"`
-	Groups map[NodeID]GroupObservation `json:"groups,omitempty"`
+	Topics    map[NodeID]TopicObservation    `json:"topics,omitempty"`
+	Groups    map[NodeID]GroupObservation    `json:"groups,omitempty"`
+	Workloads map[NodeID]WorkloadObservation `json:"workloads,omitempty"`
+}
+
+// WorkloadObservation describes the pods of a workload. Finished pods are not counted.
+type WorkloadObservation struct {
+	Pods      int `json:"pods"`
+	ReadyPods int `json:"readyPods"`
+	// NotReady lists every pod that is not ready, sorted by pod name.
+	NotReady []PodProblem `json:"notReady,omitempty"`
+}
+
+// PodProblem is a pod that is not ready. Pod names appear only here and are never locked.
+type PodProblem struct {
+	Pod string `json:"pod"`
+	// Reason is the waiting reason of a container (CrashLoopBackOff, ImagePullBackOff, ...),
+	// Unschedulable for a pod that is not scheduled, otherwise NotReady.
+	Reason string `json:"reason"`
+	// Restarts is the number of container restarts of the pod.
+	Restarts int32 `json:"restarts"`
 }
 
 // TopicObservation describes the current state of a topic.
 type TopicObservation struct {
 	Partitions int `json:"partitions"`
+	// StartOffsets maps a partition to its start offset (the offset of the oldest record that is still kept).
+	StartOffsets map[int32]int64 `json:"startOffsets,omitempty"`
 	// EndOffsets maps a partition to its end offset (the offset of the next record).
 	EndOffsets map[int32]int64 `json:"endOffsets"`
 	// LatestRecord is the timestamp of the latest record, nil when the topic holds no records.
@@ -32,8 +53,10 @@ type GroupObservation struct {
 	// State is reported by Kafka: Stable, Empty, PreparingRebalance, Dead, etc.
 	State string `json:"state"`
 	// Lag maps a topic to the group's lag summed over the partitions it has committed.
-	Lag     map[NodeID]int64    `json:"lag,omitempty"`
-	Members []MemberObservation `json:"members,omitempty"`
+	Lag map[NodeID]int64 `json:"lag,omitempty"`
+	// Committed maps a topic to the group's committed offset on each partition it has committed.
+	Committed map[NodeID]map[int32]int64 `json:"committed,omitempty"`
+	Members   []MemberObservation        `json:"members,omitempty"`
 }
 
 // MemberObservation is one member of a consumer group.
@@ -64,8 +87,9 @@ type ConfigValue struct {
 func NewSnapshot() Snapshot {
 	return Snapshot{
 		Observations: Observations{
-			Topics: make(map[NodeID]TopicObservation),
-			Groups: make(map[NodeID]GroupObservation),
+			Topics:    make(map[NodeID]TopicObservation),
+			Groups:    make(map[NodeID]GroupObservation),
+			Workloads: make(map[NodeID]WorkloadObservation),
 		},
 	}
 }

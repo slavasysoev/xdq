@@ -25,6 +25,7 @@ func Resolve(snapshot graph.Snapshot) graph.Snapshot {
 	resolved.Identities = snapshot.Identities
 	resolved.ConfigValues = snapshot.ConfigValues
 	resolved.Observations.Topics = snapshot.Observations.Topics
+	resolved.Observations.Workloads = snapshot.Observations.Workloads
 	for _, node := range snapshot.Nodes {
 		if len(matches[node.ID]) != 1 {
 			resolved.Nodes = append(resolved.Nodes, node)

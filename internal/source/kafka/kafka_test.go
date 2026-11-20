@@ -2,6 +2,7 @@ package kafka
 
 import (
 	"context"
+	"maps"
 	"slices"
 	"strings"
 	"testing"
@@ -101,6 +102,11 @@ func TestDiscover(t *testing.T) {
 				t.Errorf("end offset of partition %d = %d, want %d", partition, ordersObservation.EndOffsets[partition], want)
 			}
 		}
+		for partition := range wantEnd {
+			if ordersObservation.StartOffsets[partition] != 0 {
+				t.Errorf("start offset of partition %d = %d, want 0", partition, ordersObservation.StartOffsets[partition])
+			}
+		}
 		if ordersObservation.LatestRecord == nil {
 			t.Error("orders.created has no latest record timestamp")
 		}
@@ -120,6 +126,9 @@ func TestDiscover(t *testing.T) {
 		stalledObservation := snapshot.Observations.Groups[stalled]
 		if stalledObservation.State != "Empty" || stalledObservation.Lag[orders] != 4 || len(stalledObservation.Members) != 0 {
 			t.Errorf("stalled = %+v, want Empty, lag 4, no members", stalledObservation)
+		}
+		if want := (map[int32]int64{0: 2, 1: 4}); !maps.Equal(stalledObservation.Committed[orders], want) {
+			t.Errorf("stalled committed offsets = %v, want %v", stalledObservation.Committed[orders], want)
 		}
 
 		auditObservation := snapshot.Observations.Groups[audit]

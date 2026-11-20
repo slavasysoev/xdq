@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 const validConfig = `
@@ -36,6 +37,14 @@ rules:
     severity: off
   lagging-consumer:
     threshold: 5000
+  dead-letter-records:
+    window: 30m
+    suffixes: [.dlt, -failed]
+  unresolved-client:
+    ignore:
+      - endpoint: 10.20.0.0/16
+      - endpoint: 10.8.0.5
+      - group: billing
 `
 
 const (
@@ -91,6 +100,14 @@ func TestLoadValidConfig(t *testing.T) {
 	}
 	if *config.Rules["lagging-consumer"].Threshold != 5000 {
 		t.Errorf("threshold = %d, want 5000", *config.Rules["lagging-consumer"].Threshold)
+	}
+	deadLetter := config.Rules["dead-letter-records"]
+	if deadLetter.Window != 30*time.Minute || len(deadLetter.Suffixes) != 2 || deadLetter.Suffixes[1] != "-failed" {
+		t.Errorf("dead-letter-records = %+v, want window 30m and two suffixes", deadLetter)
+	}
+	ignore := config.Rules["unresolved-client"].Ignore
+	if len(ignore) != 3 || ignore[0].Endpoint != "10.20.0.0/16" || ignore[2].Group != "billing" {
+		t.Errorf("ignore = %+v, want endpoint range, endpoint address and group billing", ignore)
 	}
 	if len(config.Chains["order-flow"].From) != 2 {
 		t.Errorf("chain entries = %d, want 2", len(config.Chains["order-flow"].From))
@@ -231,6 +248,28 @@ chains:
 			name:       "bad severity",
 			yaml:       "version: 1\nsources: {main: {kafka: {brokers: [k:9092]}}}\nrules: {lagging-consumer: {severity: critical}}",
 			wantErrors: []string{"rules.lagging-consumer.severity: must be error, warning or off"},
+		},
+		{
+			name: "ignore selectors",
+			yaml: `
+version: 1
+sources: {main: {kafka: {brokers: [k:9092]}}}
+rules:
+  unresolved-client:
+    ignore:
+      - {}
+      - {group: a, endpoint: 10.0.0.1}
+      - {endpoint: not-an-address}
+      - {endpoint: 10.0.0.1, source: main}
+      - {group: a, source: missing}
+`,
+			wantErrors: []string{
+				"rules.unresolved-client.ignore[0]: exactly one of topic, group, workload, database must be set",
+				"rules.unresolved-client.ignore[1]: exactly one of topic, group, workload, database, endpoint must be set",
+				"rules.unresolved-client.ignore[2].endpoint: must be an IP address or a CIDR range",
+				"rules.unresolved-client.ignore[3]: exactly one of topic, group, workload, database, endpoint must be set",
+				`rules.unresolved-client.ignore[4].source: unknown source "missing"`,
+			},
 		},
 		{
 			name:       "missing env var",

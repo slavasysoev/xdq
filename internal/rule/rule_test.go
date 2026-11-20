@@ -208,7 +208,7 @@ func TestNewSet(t *testing.T) {
 		{name: "defaults", configs: nil},
 		{name: "rule turned off", configs: map[string]config.RuleConfig{"group-multiple-workloads": {Severity: config.SeverityOff}}},
 		{name: "threshold override", configs: map[string]config.RuleConfig{"lagging-consumer": {Threshold: new(5000)}}},
-		{name: "unknown rule", configs: map[string]config.RuleConfig{"stalled-consumers": {}}, wantError: "rules.stalled-consumers: unknown rule; known rules: database-spans-environments, empty-subscription"},
+		{name: "unknown rule", configs: map[string]config.RuleConfig{"stalled-consumers": {}}, wantError: "rules.stalled-consumers: unknown rule; known rules: database-spans-environments, dead-letter-records, empty-subscription"},
 		{name: "threshold on a rule without one", configs: map[string]config.RuleConfig{"stalled-consumer": {Threshold: new(1)}}, wantError: "rules.stalled-consumer.threshold: rule stalled-consumer has no threshold"},
 		{name: "negative threshold", configs: map[string]config.RuleConfig{"lagging-consumer": {Threshold: new(-1)}}, wantError: "rules.lagging-consumer.threshold: must not be negative"},
 	}

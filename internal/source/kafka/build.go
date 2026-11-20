@@ -33,6 +33,7 @@ func addTopics(snapshot *graph.Snapshot, sourceName string, topics map[string]to
 		snapshot.Nodes = append(snapshot.Nodes, node)
 		snapshot.Observations.Topics[node.ID] = graph.TopicObservation{
 			Partitions:   topic.partitions,
+			StartOffsets: topic.startOffsets,
 			EndOffsets:   topic.endOffsets,
 			LatestRecord: topic.latestRecord,
 		}
@@ -55,6 +56,12 @@ func addGroup(snapshot *graph.Snapshot, sourceName, name string, cluster cluster
 			Confidence: graph.ConfidenceObserved,
 			Evidence:   []graph.Evidence{{Source: sourceName, Detail: subscriptionDetail(group, topic)}},
 		})
+		if len(group.committed[topic]) > 0 {
+			if observation.Committed == nil {
+				observation.Committed = make(map[graph.NodeID]map[int32]int64)
+			}
+			observation.Committed[topicID] = group.committed[topic]
+		}
 		lag, hasLag := topicLag(group.committed[topic], cluster.topics[topic].endOffsets)
 		if hasLag {
 			if observation.Lag == nil {

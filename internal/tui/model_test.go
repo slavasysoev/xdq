@@ -211,3 +211,17 @@ func TestVisible(t *testing.T) {
 func plain(view tea.View) string {
 	return ansi.Strip(view.Content)
 }
+
+func TestFindingSummaryCountsIgnoredApart(t *testing.T) {
+	findings := []report.Finding{
+		{Severity: report.SeverityError},
+		{Severity: report.SeverityError, Ignored: true},
+	}
+
+	if got, want := findingSummary(findings), "1 error, 1 ignored"; got != want {
+		t.Errorf("summary = %q, want %q", got, want)
+	}
+	if got, want := findingSummary(findings[1:]), "no findings, 1 ignored"; got != want {
+		t.Errorf("summary = %q, want %q", got, want)
+	}
+}

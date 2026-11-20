@@ -19,6 +19,7 @@ type clusterState struct {
 
 type topicState struct {
 	partitions   int
+	startOffsets map[int32]int64
 	endOffsets   map[int32]int64
 	latestRecord *time.Time
 }
@@ -87,6 +88,11 @@ func (source *Source) fetchTopics(ctx context.Context) (map[string]topicState, e
 
 	// Topic names are passed explicitly: with no names, these requests cover internal topics too.
 	names := details.Names()
+	startOffsets, err := source.admin.ListStartOffsets(ctx, names...)
+	err = responseError(err, startOffsets)
+	if err != nil {
+		return nil, fmt.Errorf("list start offsets: %w", err)
+	}
 	endOffsets, err := source.admin.ListEndOffsets(ctx, names...)
 	err = responseError(err, endOffsets)
 	if err != nil {
@@ -99,7 +105,14 @@ func (source *Source) fetchTopics(ctx context.Context) (map[string]topicState, e
 	}
 
 	for name, detail := range details {
-		topic := topicState{partitions: len(detail.Partitions), endOffsets: make(map[int32]int64)}
+		topic := topicState{
+			partitions:   len(detail.Partitions),
+			startOffsets: make(map[int32]int64),
+			endOffsets:   make(map[int32]int64),
+		}
+		for partition, offset := range startOffsets[name] {
+			topic.startOffsets[partition] = offset.Offset
+		}
 		for partition, offset := range endOffsets[name] {
 			topic.endOffsets[partition] = offset.Offset
 		}

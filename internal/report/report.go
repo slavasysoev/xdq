@@ -65,6 +65,9 @@ type Finding struct {
 	Chain    string           `json:"chain,omitempty"`
 	Message  string           `json:"message"`
 	Evidence []graph.Evidence `json:"evidence,omitempty"`
+	// Ignored marks a finding that matches an exception of the config. It stays in the report,
+	// but counts in no status and does not make the check fail.
+	Ignored bool `json:"ignored,omitempty"`
 }
 
 // NewChain makes a chain of the nodes and edges of the subgraph, every status ok.
@@ -119,6 +122,9 @@ func (report *Report) assignStatuses() {
 	findingStatus := make(map[graph.NodeID]Status)
 	chainFindingStatus := make(map[string]Status)
 	for _, finding := range report.Findings {
+		if finding.Ignored {
+			continue
+		}
 		for _, subject := range finding.Subjects {
 			findingStatus[subject] = Worst(findingStatus[subject], finding.Severity.Status())
 		}
@@ -162,9 +168,11 @@ func (report *Report) IsComplete() bool {
 	return !slices.ContainsFunc(report.Sources, func(result SourceResult) bool { return result.Status != StatusOK })
 }
 
-// HasErrors tells whether at least one finding has error severity.
+// HasErrors tells whether at least one finding that is not ignored has error severity.
 func (report *Report) HasErrors() bool {
-	return slices.ContainsFunc(report.Findings, func(finding Finding) bool { return finding.Severity == SeverityError })
+	return slices.ContainsFunc(report.Findings, func(finding Finding) bool {
+		return finding.Severity == SeverityError && !finding.Ignored
+	})
 }
 
 // FindingsInChain returns the findings about the chain itself or with a subject in it, in the

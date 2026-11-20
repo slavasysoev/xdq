@@ -8,6 +8,7 @@ import (
 	"github.com/slavasysoev/xdq/internal/config"
 	"github.com/slavasysoev/xdq/internal/graph"
 	"github.com/slavasysoev/xdq/internal/report"
+	"github.com/slavasysoev/xdq/internal/rule"
 )
 
 // chainAll is the implicit chain when the config names no chains (§8.1).
@@ -34,7 +35,7 @@ func extractChains(
 	for _, name := range slices.Sorted(maps.Keys(definitions)) {
 		var entries []graph.NodeID
 		for _, entry := range definitions[name].From {
-			selector := selectorOf(entry)
+			selector := rule.SelectorOf(entry)
 			matched := matchingNodes(snapshot, selector, environment)
 			if len(matched) == 0 && complete {
 				message := fmt.Sprintf("entry %s matched no node", selector)
@@ -75,19 +76,6 @@ func implicitChain(snapshot graph.Snapshot, environment string, complete bool) (
 
 func entryNotFound(chain, message string) report.Finding {
 	return report.Finding{Rule: ruleChainEntryNotFound, Severity: report.SeverityError, Chain: chain, Message: message}
-}
-
-func selectorOf(entry config.SelectorConfig) graph.Selector {
-	switch {
-	case entry.Topic != "":
-		return graph.Selector{Kind: graph.NodeTopic, Name: entry.Topic, Source: entry.Source}
-	case entry.Group != "":
-		return graph.Selector{Kind: graph.NodeGroup, Name: entry.Group, Source: entry.Source}
-	case entry.Workload != "":
-		return graph.Selector{Kind: graph.NodeWorkload, Name: entry.Workload, Source: entry.Source}
-	default:
-		return graph.Selector{Kind: graph.NodeDatabase, Name: entry.Database, Source: entry.Source}
-	}
 }
 
 func matchingNodes(snapshot graph.Snapshot, selector graph.Selector, environment string) []graph.NodeID {

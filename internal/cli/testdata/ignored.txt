@@ -1,0 +1,8 @@
+main  kafka  ok        120ms
+
+all  WARNING
+
+  WARNING  empty-subscription  group:main/billing, topic:main/orders.created
+           subscribed to a topic that has never received a record
+
+  1 ignored by rule exceptions; see --output json
